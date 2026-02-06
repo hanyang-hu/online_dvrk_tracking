@@ -1,0 +1,11 @@
+SurgicalSAM2/checkpoints/*.pth
+data/*
+pose_results/*
+tracking/*
+ContourTipNet/data/*
+ContourTipNet/GIFs/*
+ContourTipNet/Archive/*
+
+# python
+__pycache__/
+*.pyc

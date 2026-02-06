@@ -1,0 +1,6 @@
+[submodule "TuRBO"]
+	path = TuRBO
+	url = https://github.com/hanyang-hu/TuRBO.git
+[submodule "Surgical-SAM-2"]
+	path = SurgicalSAM2
+	url = https://github.com/hanyang-hu/Surgical-SAM-2.git

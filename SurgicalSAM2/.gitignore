@@ -1,0 +1,17 @@
+.vscode/
+.idea/
+.DS_Store
+__pycache__/
+*-checkpoint.ipynb
+.venv
+*.egg*
+build/*
+_C.*
+outputs/*
+checkpoints/*.pt
+checkpoints/*.pth
+demo/backend/checkpoints/*.pt
+datasets/*
+model_weights/*
+/sav_dataset/example/
+!datasets/

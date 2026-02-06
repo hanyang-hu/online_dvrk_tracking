@@ -1,0 +1,8 @@
+numpy
+matplotlib
+tqdm
+opencv-python
+kornia==0.7.0
+scikit-fmm
+scipy
+scikit-image

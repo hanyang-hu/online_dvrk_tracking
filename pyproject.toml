@@ -1,0 +1,49 @@
+
+[build-system]
+requires = ["setuptools>=42", "wheel", "Cython", "numpy",]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "diffcali"
+description = "Differentiable Calibration."
+dependencies = [
+    "black >= 24.4",
+]
+
+maintainers = [
+]
+
+license = { file = "LICENSE" }
+readme = "README.md"
+keywords = ["differentiable calibration"]
+classifiers = [
+    # How mature is this project? Common values are
+    #   3 - Alpha
+    #   4 - Beta
+    #   5 - Production/Stable
+    "Development Status :: 3 - Alpha",
+
+    # Indicate who your project is intended for
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering",
+
+    # License
+    "License :: OSI Approved :: MIT License",
+
+    # Specify the Python versions you support here.
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+requires-python = ">= 3.10"
+dynamic = ["version"]
+
+[tool.setuptools]
+py-modules = ["diffcali"]
+
+[tool.black]
+include = 'diffcali/.*py$|tests/.*\.py$|scripts/.*\.py$'
+force-exclude = '''
+submodules/.*
+'''
