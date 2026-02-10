@@ -1,4 +1,5 @@
 #!/bin/bash
+find . -type f -name '*:Zone.Identifier' -delete
 
 # Base options for sequential_tracking.py
 TRACKING_OPTS="--rotation_parameterization MixAngle \
@@ -10,29 +11,40 @@ TRACKING_OPTS="--rotation_parameterization MixAngle \
 --use_tip_emd_loss False \
 --filter_option Kalman \
 --use_nvdiffrast \
---use_bbox_optimizer \
 --batch_size 50 \
 --batch_iters 100 \
 --use_bo_initializer \
---sample_number 1500 \
---online_iters 5 \
---final_iters 10 \
+--sample_number 2000 \
+--online_iters 3 \
+--cos_reparams True \
+--final_iters 100 \
 --use_prev_joint_angles True \
---data_dir synthetic_data \
---use_gt_kpts True"
+--data_dir synthetic"
 
-# Loop over bag_id 1 to 10
-for BAG_ID in {1..10}; do
+# Loop over bag_id from 0 to 7 as well as from 30 to 33 with both PSM1 and PSM3
+for BAG_ID in {0..11}; do
     echo "Processing bag $BAG_ID ..."
     
-    BAG_ID_str="${BAG_ID}"
-    BAG_NAME="syn_new${BAG_ID}"
+    BAG_NAME="$(printf '%06d' $BAG_ID)/PSM1"
+    BAG_ID_str="${BAG_ID}_PSM1"
 
     # Run sequential tracking
     python scripts/sequential_tracking.py $TRACKING_OPTS --difficulty $BAG_NAME
 
     # Generate video for current bag
-    python scripts/video_generator.py --bag_id $BAG_ID_str --iters_per_frame 5 --data_type synthetic
+    python scripts/video_generator.py --bag_id $BAG_ID_str --iters_per_frame 3 --data_type synthetic
+
+    # Remove tracking folder to save space
+    rm -rf tracking
+
+    BAG_NAME="$(printf '%06d' $BAG_ID)/PSM3"
+    BAG_ID_str="${BAG_ID}_PSM3"
+
+    # Run sequential tracking
+    python scripts/sequential_tracking.py $TRACKING_OPTS --difficulty $BAG_NAME
+
+    # Generate video for current bag
+    python scripts/video_generator.py --bag_id $BAG_ID_str --iters_per_frame 3 --data_type synthetic
 
     # Remove tracking folder to save space
     rm -rf tracking

@@ -5,6 +5,9 @@ tracking/*
 ContourTipNet/data/*
 ContourTipNet/GIFs/*
 ContourTipNet/Archive/*
+*.gif
+*.png
+*.zip
 
 # python
 __pycache__/

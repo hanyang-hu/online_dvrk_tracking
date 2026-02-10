@@ -11,23 +11,21 @@ TRACKING_OPTS="--rotation_parameterization MixAngle \
 --use_tip_emd_loss False \
 --filter_option Kalman \
 --use_nvdiffrast \
---use_bbox_optimizer \
 --batch_size 50 \
 --batch_iters 100 \
 --use_bo_initializer \
---sample_number 1500 \
+--sample_number 2000 \
 --online_iters 3 \
 --cos_reparams True \
---final_iters 50 \
+--final_iters 100 \
 --use_prev_joint_angles True \
---data_dir surgpose \
---use_gt_kpts True "
+--data_dir surgpose"
 
-# Loop over bag_id 0 to 7 with both PSM1 and PSM3
-for BAG_ID in {0..7}; do
+# Loop over bag_id from 0 to 7 as well as from 30 to 33 with both PSM1 and PSM3
+for BAG_ID in {0..7} {30..33}; do
     echo "Processing bag $BAG_ID ..."
     
-    BAG_NAME="bag${BAG_ID}_PSM1"
+    BAG_NAME="$(printf '%06d' $BAG_ID)/PSM1"
     BAG_ID_str="${BAG_ID}_PSM1"
 
     # Run sequential tracking
@@ -39,7 +37,7 @@ for BAG_ID in {0..7}; do
     # Remove tracking folder to save space
     rm -rf tracking
 
-    BAG_NAME="bag${BAG_ID}_PSM3"
+    BAG_NAME="$(printf '%06d' $BAG_ID)/PSM3"
     BAG_ID_str="${BAG_ID}_PSM3"
 
     # Run sequential tracking

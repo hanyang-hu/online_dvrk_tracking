@@ -203,15 +203,15 @@ class PoseEstimationProblem(Problem):
         self.render_loss = self.args.use_render_loss
         self.dist_loss = self.args.dist_weight > 0.
         self.kpts_loss = self.args.use_pts_loss
-        self.tip_emd_loss = self.args.use_tip_emd_loss
+        # self.tip_emd_loss = self.args.use_tip_emd_loss
 
-        assert self.tip_emd_loss is False, "The tip EMD loss is not supported currently."
+        # assert self.tip_emd_loss is False, "The tip EMD loss is not supported currently."
 
         self.mse_weight = self.args.mse_weight  # weight for the MSE loss
         self.dist_weight = self.args.dist_weight  # weight for the distance loss
         self.app_weight = self.args.app_weight  # weight for the appearance loss
         self.pts_weight = self.args.pts_weight  # weight for the keypoint loss
-        self.tip_emd_weight = self.args.tip_emd_weight  # weight for the tip EMD loss
+        # self.tip_emd_weight = self.args.tip_emd_weight  # weight for the tip EMD loss
 
         # Convert stdev_init to lengthscales
         if torch.is_tensor(stdev_init):
@@ -945,7 +945,7 @@ class Tracker:
                 self.filter = KalmanFilter(
                     process_noise_pos=np.array([2e-5, 1e-4, 2e-5, 2e-5, 2e-5, 2e-5, 1e-4, 1e-4, 1e-4, 1e-4]),      # scalar or (D,)
                     process_noise_vel=np.array([2e-4, 1e-3, 2e-4, 2e-4, 2e-4, 2e-4, 1e-3, 1e-3, 1e-3, 1e-3]),      # scalar or (D,)
-                    measurement_noise=np.array([2e-3, 1e-2, 2e-3, 2e-3, 2e-3, 2e-3, 1e-2, 1e-2, 1e-2, 1e-2]) * ms_factor,      # scalar or (D,)
+                    measurement_noise=np.array([2e-3, 1e-2, 2e-3, 2e-3, 2e-3, 2e-3, 5e-3, 5e-3, 5e-3, 5e-3]) * ms_factor * 0.5,      # scalar or (D,)
                 )
             else:
                 raise ValueError(f"Unknown filter option: {args.filter_option}")
@@ -1077,7 +1077,133 @@ class Tracker:
             ref_pts=ref_keypoints,
             proj_pts=proj_keypoints,
         )
+    
+    def track_frame(self, ref_mask, joint_angles, is_init=False, keypoints=None):
+        if is_init:
+            # Initialization settings
+            use_dist_loss = self.problem.dist_loss
+            dist_weight = self.problem.dist_weight
+            kpts_weight = self.problem.pts_weight
 
+            self.problem.dist_loss = True # enable distance loss during initialization
+            self.problem.dist_weight = 12e-7 # distance weight during initialization
+            self.problem.pts_weight = 5e-3 # increase the keypoint weight during initialization
+    
+        # # Update the problem with the new inputs
+        # if ref_mask.shape[0] != self.problem.resolution[0] or ref_mask.shape[1] != self.problem.resolution[1]:
+        #     ref_mask = F.interpolate(
+        #         ref_mask.float().unsqueeze(0).unsqueeze(0), 
+        #         size=self.problem.resolution, 
+        #         mode='bilinear'
+        #     ).squeeze(0).squeeze(0)
+
+        # Detect keypoints from the reference mask if using contour tip net
+        if keypoints is not None: 
+            ref_keypoints = keypoints
+        elif self.args.use_contour_tip_net:
+            with torch.no_grad():
+                ref_keypoints = detect_keypoints_2d(
+                    model=self.tip_2d_net,
+                    mask=ref_mask,
+                )
+        else:
+            ref_keypoints = None
+        
+        self.problem.update_problem(
+            ref_mask, ref_keypoints, self._prev_cTr.clone(), self.stdev_init.clone()
+        )
+
+        # Initialize the solution with the previous cTr and joint angles
+        cTr = self.problem.cTr_init
+        try: 
+            joint_angles = self._prev_joint_angles.clone() if self.args.use_prev_joint_angles else joint_angles.clone()
+        except:
+            raise ValueError(f"Error in cloning joint angles. joint_angles: {joint_angles}, turn on --use_prev_joint_angles to use previous joint angles as initialization.")
+        
+        if self.args.cos_reparams:
+            joint_angles_R = self.problem.joint_angles_ub - self.problem.joint_angles_lb
+            joint_angles = self.problem.joint_angles_lb + \
+                        joint_angles_R / math.pi * \
+                        torch.acos(1 - 2 * (joint_angles - self.problem.joint_angles_lb) / joint_angles_R)
+            
+        if self.args.symmetric_jaw:
+            center_init = torch.cat([cTr, joint_angles[:3]], dim=0)
+        else:
+            center_init = torch.cat([cTr, joint_angles], dim=0)
+
+        kwargs = dict(
+            problem=self.problem,
+            stdev_init=1.,
+            center_init=center_init / self.problem.lengthscales,
+            popsize=self.args.popsize if not is_init else min(self.args.popsize, 30),
+            sobol=self.sobol,
+        )
+        sig = inspect.signature(self.optimizer.__init__)
+        accepted = set(sig.parameters.keys())
+        filtered_kwargs = {
+            k: v for k, v in kwargs.items() if k in accepted
+        }
+
+        searcher = self.optimizer(**filtered_kwargs)
+        logger = DummyLogger(searcher, interval=1, after_first_step=False)
+
+        searcher.run(self.num_iters if not is_init else max(self.args.final_iters, self.num_iters))
+
+        with torch.no_grad():
+            # Extract the best solution and evaluation from the logger
+            best_solution = logger.best_solution
+
+            best_solution = best_solution * self.problem.lengthscales
+
+            cTr, joint_angles = best_solution[:self.problem.pose_dim], best_solution[self.problem.pose_dim:]
+            loss = logger.best_eval
+
+            if self.args.symmetric_jaw:
+                joint_angles = torch.cat([joint_angles[:3], joint_angles[-1:]], dim=0)  # make jaws symmetric
+
+            # joint_angles = torch.clamp(joint_angles, self.problem.joint_angles_lb, self.problem.joint_angles_ub)
+            # if self.args.searcher == 'CMA-ES':
+            if self.args.cos_reparams:
+                joint_angles = self.problem.joint_angles_lb + \
+                        0.5 * joint_angles_R * (1 - torch.cos(math.pi * (joint_angles - self.problem.joint_angles_lb) / joint_angles_R))
+            else:
+                joint_angles = torch.clamp(joint_angles, self.problem.joint_angles_lb, self.problem.joint_angles_ub)
+
+            # Filter the results via a low-pass filter
+            if self.args.use_filter:
+                full_state = torch.cat([cTr, joint_angles], dim=0).cpu().numpy()
+
+                if is_init:
+                    self.filter.reset(full_state)
+                else:
+                    # np.unwrap rotation angles before filtering
+                    for j in range(3):
+                        prev_cTr_np = self._prev_cTr[j].cpu().numpy()
+                        curr_cTr_np = full_state[j]
+                        unwrapped_cTr_np = np.unwrap(
+                            np.array([prev_cTr_np, curr_cTr_np]), axis=0
+                        )[1]
+                        full_state[j] = unwrapped_cTr_np
+
+                        self.filter.update(full_state)
+
+                    filtered_state = self.filter.get_x_hat()
+                    cTr = torch.from_numpy(filtered_state[:self.problem.pose_dim]).to(self.model.device).type(cTr.dtype)
+                    joint_angles = torch.from_numpy(filtered_state[self.problem.pose_dim:]).to(self.model.device).type(joint_angles.dtype)
+
+                self._prev_cTr = cTr.detach().clone()
+                self._prev_joint_angles = joint_angles.detach().clone()
+
+            if is_init:
+                self.problem.dist_loss = use_dist_loss # restore distance loss
+                self.problem.dist_weight = dist_weight # restore distance weight
+                self.problem.pts_weight = kpts_weight # restore pts weight
+
+            if self.args.use_mix_angle:
+                cTr[:3] = mix_angle_to_axis_angle(cTr[:3].unsqueeze(0)).squeeze(0)
+
+        return cTr, joint_angles, loss
+        
     def track_sequence(
         self, mask_lst, joint_angles_lst, ref_keypoints_lst, det_line_params_lst, visualization=False
     ):
@@ -1114,7 +1240,7 @@ class Tracker:
             ref_keypoints = ref_keypoints_lst[i][:2]
 
             with torch.no_grad():
-                if self.args.use_contour_tip_net:
+                if i != 0 and self.args.use_contour_tip_net:
                     # # print(self.contour_tip_net, ref_mask.shape)
                     # ref_keypoints = detect_keypoints(
                     #     model=self.contour_tip_net,
@@ -1378,12 +1504,12 @@ class BiManualTracker(Tracker):
             self.filter_left = self.filter = KalmanFilter(
                 process_noise_pos=np.array([2e-5, 1e-4, 2e-5, 2e-5, 2e-5, 2e-5, 1e-4, 1e-4, 1e-4, 1e-4]),      # scalar or (D,)
                 process_noise_vel=np.array([2e-4, 1e-3, 2e-4, 2e-4, 2e-4, 2e-4, 1e-3, 1e-3, 1e-3, 1e-3]),      # scalar or (D,)
-                measurement_noise=np.array([2e-3, 1e-2, 2e-3, 2e-3, 2e-3, 2e-3, 1e-2, 1e-2, 1e-2, 1e-2]),      # scalar or (D,)
+                measurement_noise=np.array([2e-3, 1e-2, 2e-3, 2e-3, 2e-3, 2e-3, 5e-3, 5e-3, 5e-3, 5e-3]) * 0.5,      # scalar or (D,)
             )
             self.filter_right = self.filter = KalmanFilter(
                 process_noise_pos=np.array([2e-5, 1e-4, 2e-5, 2e-5, 2e-5, 2e-5, 1e-4, 1e-4, 1e-4, 1e-4]),      # scalar or (D,)
                 process_noise_vel=np.array([2e-4, 1e-3, 2e-4, 2e-4, 2e-4, 2e-4, 1e-3, 1e-3, 1e-3, 1e-3]),      # scalar or (D,)
-                measurement_noise=np.array([2e-3, 1e-2, 2e-3, 2e-3, 2e-3, 2e-3, 1e-2, 1e-2, 1e-2, 1e-2]),      # scalar or (D,)
+                measurement_noise=np.array([2e-3, 1e-2, 2e-3, 2e-3, 2e-3, 2e-3, 5e-3, 5e-3, 5e-3, 5e-3]) * 0.5,      # scalar or (D,)
             )
 
         # Different variants of CMA-ES for different settings
@@ -1558,6 +1684,9 @@ class BiManualTracker(Tracker):
             proj_pts_left=proj_keypoints_left,
             proj_pts_right=proj_keypoints_right,
         )
+
+    def track(self, ref_mask, joint_angles=None, ref_keypoints=None):
+        pass
 
     def track_sequence(
         self, mask_lst, joint_angles_lst, ref_keypoints_lst, det_line_params_lst, visualization=False

@@ -195,9 +195,10 @@ def parseArgs():
     args.use_gpu = True
     args.trained_on_multi_gpus = False
 
-    args.height = 480
-    args.width = 640
-    args.fx, args.fy, args.px, args.py = 1025.88223, 1025.88223, 167.919017, 234.152707
+    # Setting for SurgPose data
+    args.height = 986 // 2
+    args.width = 1400 // 2
+    args.fx, args.fy, args.px, args.py = 1811.910046453570 / 2, 1809.640734154330 / 2, 588.5594517681759 / 2, 477.3975900383616 / 2
     args.scale = 1.0
 
     # clip space parameters
@@ -285,241 +286,6 @@ def edge_signal(contour: np.ndarray, centroid: np.ndarray):
     return distances
 
 
-def intialize_pose(model, robot_renderer, args, joints_lb, joints_ub, reference_quat=None):
-    """
-    Generate inital pose such that the end-effector is within the camera view
-    and the two tips are clearly visible
-    """
-    to_break = False
-    while not to_break:
-        xyz_lb = torch.tensor([-0.03, -0.03, 0.10], dtype=torch.float32).to("cuda")
-        xyz_ub = torch.tensor([+0.03, +0.03, 0.20], dtype=torch.float32).to("cuda")
-
-        # Randomly sample inital joint angles and positions within bounds
-        joint_angles_init = torch.empty(3).uniform_(0, 1).to("cuda") * (joints_ub - joints_lb) + joints_lb
-        position_init = torch.empty(3).uniform_(0, 1).to("cuda") * (xyz_ub - xyz_lb) + xyz_lb
-
-        if reference_quat is None:
-            # Sample initial rotation from pose hypoetheses space
-            camera_roll_local = torch.empty(1).uniform_(
-                0, 360
-            )  # Random values in [0, 360]
-            camera_roll = torch.empty(1).uniform_(0, 360)  # Random values in [0, 360]
-            azimuth = torch.empty(1).uniform_(0, 360)  # Random values in [0, 360]
-            elevation = torch.empty(1).uniform_(
-                90 - 60, 90 - 30
-            )  # Random values in [90-25, 90+25]
-            # elevation = 30
-
-            distance = torch.empty(1).uniform_(0.10, 0.17)
-
-            pose_matrix = model.from_lookat_to_pose_matrix(
-                distance, elevation, camera_roll_local
-            )
-            roll_rad = torch.deg2rad(camera_roll)  # Convert roll angle to radians
-            roll_matrix = torch.tensor(
-                [
-                    [torch.cos(roll_rad), -torch.sin(roll_rad), 0],
-                    [torch.sin(roll_rad), torch.cos(roll_rad), 0],
-                    [0, 0, 1],
-                ]
-            )
-            pose_matrix[:, :3, :3] = torch.matmul(roll_matrix, pose_matrix[:, :3, :3])
-            cTr = model.pose_matrix_to_cTr(pose_matrix).squeeze(0)
-    
-        else:
-            # Perturb reference quaternion and convert to cTr
-            try: 
-                quat = reference_quat + 0.01 * torch.randn(4).cuda()
-            except:
-                quat = reference_quat.q + 0.01 * torch.randn(4).cuda()
-            quat = quat / torch.norm(quat)
-            axis_angle = kornia.geometry.conversions.quaternion_to_axis_angle(quat.unsqueeze(0)).squeeze(0)
-            cTr = torch.cat([axis_angle, position_init], dim=0)
-
-        cTr[3:] = position_init
-
-        joint_angles = torch.cat([joint_angles_init, joint_angles_init[-1:].clone()], dim=0)  # jaw1=jaw2
-
-        model.get_joint_angles(joint_angles)
-        robot_mesh = robot_renderer.get_robot_mesh(joint_angles)
-
-        R_batched = kornia.geometry.conversions.axis_angle_to_rotation_matrix(
-            cTr[:3].unsqueeze(0)
-        ) 
-        R_batched = R_batched.transpose(1, 2)
-        T_batched = cTr[3:].unsqueeze(0)
-        negative_mask = T_batched[:, -1] < 0  #flip where negative_mask is True
-        T_batched_ = T_batched.clone()
-        T_batched_[negative_mask] = -T_batched_[negative_mask]
-        R_batched_ = R_batched.clone()
-        R_batched_[negative_mask] = -R_batched_[negative_mask]
-        pos, pos_idx = transform_mesh(
-            cameras=robot_renderer.cameras, mesh=robot_mesh.extend(1),
-            R=R_batched_, T=T_batched_, args=args
-        ) # project the batched meshes in the clip 
-        
-        rendered_mask = render(glctx, pos, pos_idx[0], resolution)[0] # shape (H, W)
-
-        # Extract contour
-        contour = extract_contour(rendered_mask * 255., contour_length=200)
-
-        if contour is None:
-            continue
-
-        # Project keypoints
-        intr = torch.tensor(
-            [
-                [args.fx, 0, args.px], 
-                [0, args.fy, args.py], 
-                [0, 0, 1]
-            ],
-            device="cuda",
-            dtype=joint_angles.dtype,
-        )
-
-        p_local1 = (
-            torch.tensor([0.0, 0.0004, 0.0096])
-            .to(joint_angles.dtype)
-            .to(model.device)
-        )
-        p_local2 = (
-            torch.tensor([0.0, -0.0004, 0.0096])
-            .to(joint_angles.dtype)
-            .to(model.device)
-        )
-        
-        # Project keypoints
-        pose_matrix = model.cTr_to_pose_matrix(cTr.unsqueeze(0)).squeeze()
-        R_list, t_list = lndFK(joint_angles)
-        R_list = R_list.to(model.device)
-        t_list = t_list.to(model.device)
-        p_img1 = get_img_coords(
-            p_local1,
-            R_list[2],
-            t_list[2],
-            pose_matrix.to(joint_angles.dtype),
-            intr,
-        )
-        p_img2 = get_img_coords(
-            p_local2,
-            R_list[3],
-            t_list[3],
-            pose_matrix.to(joint_angles.dtype),
-            intr,
-        )
-        proj_keypoints = torch.stack([p_img1, p_img2], dim=0)
-        
-        # Determine if keypoints is detectable
-        # Step 1: Project another point on the tool tip
-        p_local3 = (
-            torch.tensor([0.0, 0.0004, 0.0075])
-            .to(joint_angles.dtype)
-            .to(model.device)
-        )
-        p_local4 = (
-            torch.tensor([0.0, -0.0004, 0.0075])
-            .to(joint_angles.dtype)
-            .to(model.device)
-        )
-        p_img3 = get_img_coords(
-            p_local3,
-            R_list[2],
-            t_list[2],
-            pose_matrix.to(joint_angles.dtype),
-            intr,
-        )
-        p_img4 = get_img_coords(
-            p_local4,
-            R_list[3],
-            t_list[3],
-            pose_matrix.to(joint_angles.dtype),
-            intr,
-        )
-
-        # Step 2: Choose the reference center as the intersection of the two tips
-        # First compute the intersection of the two lines (p_img1, p_img3) and (p_img2, p_img4)
-        # If the reference is in the direction of (p_img3 -> p_img1) and (p_img4 -> p_img2) flip it to the opposite side
-        def line_params(p1, p2):
-            x1, y1 = p1
-            x2, y2 = p2
-            A = y2 - y1
-            B = x1 - x2
-            C = x2 * y1 - x1 * y2
-            return A, B, C
-        A1, B1, C1 = line_params(p_img1, p_img3)
-        A2, B2, C2 = line_params(p_img2, p_img4)
-        D = A1 * B2 - A2 * B1
-        if D == 0:
-            # Lines are parallel, use midpoint between p_img1 and p_img2
-            ref_center = torch.tensor([(p_img1[1] + p_img2[1]).item() / 2,
-                                        (p_img1[0] + p_img2[0]).item() / 2])
-        else:
-            x0 = (B1 * C2 - B2 * C1) / D
-            y0 = (C1 * A2 - C2 * A1) / D
-            ref_center = torch.tensor([y0.item(), x0.item()])  # (y,x)
-
-        # reference should be closer to p_img3 and p_img4 than p_img1 and p_img2
-        ref_center_swapped = torch.tensor([ref_center[1].item(), ref_center[0].item()])
-        if (torch.norm(ref_center_swapped - p_img3.cpu()).item() > torch.norm(ref_center_swapped - p_img1.cpu()).item()) or \
-            (torch.norm(ref_center_swapped - p_img4.cpu()).item() > torch.norm(ref_center_swapped - p_img2.cpu()).item()):
-            ref_center = 2 * torch.tensor([(p_img1[1] + p_img2[1]).item() / 2,
-                                            (p_img1[0] + p_img2[0]).item() / 2]) - ref_center
-
-        ref_center = ref_center.cpu().numpy()
-        
-        # Step 3: Compute star-skeletonization signal and use it to determine keypoint visibility
-        keypoints_mask = torch.zeros((proj_keypoints.shape[0],), dtype=torch.bool, device=proj_keypoints.device)
-
-        signal = edge_signal(contour, ref_center)
-
-        # Smooth signal by DFT
-        signal_fft = np.fft.fft(signal)
-        freq_cutoff_ratio = 0.1
-        N = len(signal)
-        freq_cutoff = int(N * freq_cutoff_ratio)
-        signal_fft[freq_cutoff:(N - freq_cutoff)] = 0
-        signal_smooth = np.fft.ifft(signal_fft).real
-        signal = signal_smooth
-
-        # Find local maxima of the signal (do not consider circularity here)
-        local_max_indices = (np.diff(np.sign(np.diff(signal))) < 0).nonzero()[0] + 1  # +1 due to diff reducing length by 1
-        local_max_values = signal[local_max_indices]
-
-        # Check if projected keypoints are close to any local maxima
-        if len(local_max_indices) > 0:
-            for k in range(proj_keypoints.shape[0]):
-                xk, yk = proj_keypoints[k]
-                dists = np.linalg.norm(contour[local_max_indices] - np.array([yk.item(), xk.item()]), axis=1)
-                if np.min(dists) < 3:  # pixels
-                    keypoints_mask[k] = True
-
-        # Check if both keypoints are visible and correspond to distinct local maxima
-        if torch.all(keypoints_mask) and (local_max_indices.shape[0] >= 2) and (np.abs(local_max_indices[0] - local_max_indices[1]) > 15):
-            to_break = True
-
-        # # Chekck if p_img1 and p_img2 are close to the contour and not overlapped
-        # tip1_dist = np.min(np.linalg.norm(contour - np.array([p_img1[1].item(), p_img1[0].item()]), axis=1))
-        # tip2_dist = np.min(np.linalg.norm(contour - np.array([p_img2[1].item(), p_img2[0].item()]), axis=1))
-        # tips_dist = np.linalg.norm(p_img1.cpu().numpy() - p_img2.cpu().numpy())
-        # if tip1_dist < 5 and tip2_dist < 5 and tips_dist > 15:
-        #     to_break = True
-
-        # Check if p_img3 and p_img4 are close to the contour (basically not occluded)
-        tip3_dist = np.min(np.linalg.norm(contour - np.array([p_img3[1].item(), p_img3[0].item()]), axis=1))
-        tip4_dist = np.min(np.linalg.norm(contour - np.array([p_img4[1].item(), p_img4[0].item()]), axis=1))
-        if tip3_dist < 3 and tip4_dist < 3:
-            to_break = to_break and True
-
-    mix_angle_init = axis_angle_to_mix_angle(cTr[:3].unsqueeze(0)).squeeze(0)
-
-    # Compute reference quaternion
-    reference_lookat_init = mix_angle_to_axis_angle(mix_angle_init.unsqueeze(0)).squeeze(0)
-    quat_init = kornia.geometry.conversions.axis_angle_to_quaternion(reference_lookat_init.unsqueeze(0)).squeeze(0)
-
-    return mix_angle_init, joint_angles_init, position_init, quat_init
-
-
 def cubic_hermite(p0, p1, m0, m1, t):
     """
     p0, p1: (..., D)
@@ -588,21 +354,34 @@ def ou_perturb_trajectory(
 
     return perturbed                   
 
-
-target_dir = "./data/synthetic_data/1006/"
-data_dir = "./data/ground_truth.pt"
-
 """
-python scripts/scratch_synthetic_data.py --target_dir ./data/synthetic_data/syn_new1
-python scripts/scratch_synthetic_data.py --target_dir ./data/synthetic_data/syn_new2
-python scripts/scratch_synthetic_data.py --target_dir ./data/synthetic_data/syn_new3
-python scripts/scratch_synthetic_data.py --target_dir ./data/synthetic_data/syn_new4
-python scripts/scratch_synthetic_data.py --target_dir ./data/synthetic_data/syn_new5
-python scripts/scratch_synthetic_data.py --target_dir ./data/synthetic_data/syn_new6
-python scripts/scratch_synthetic_data.py --target_dir ./data/synthetic_data/syn_new7
-python scripts/scratch_synthetic_data.py --target_dir ./data/synthetic_data/syn_new8
-python scripts/scratch_synthetic_data.py --target_dir ./data/synthetic_data/syn_new9
-python scripts/scratch_synthetic_data.py --target_dir ./data/synthetic_data/syn_new10
+Generate 12 trajectories corresponding to {0..7} {30..33}
+
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000000/PSM1 --source_traj_path "./pose_results/surgpose_000000_PSM1.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000001/PSM1 --source_traj_path "./pose_results/surgpose_000001_PSM1.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000002/PSM1 --source_traj_path "./pose_results/surgpose_000002_PSM1.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000003/PSM1 --source_traj_path "./pose_results/surgpose_000003_PSM1.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000004/PSM1 --source_traj_path "./pose_results/surgpose_000004_PSM1.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000005/PSM1 --source_traj_path "./pose_results/surgpose_000005_PSM1.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000006/PSM1 --source_traj_path "./pose_results/surgpose_000006_PSM1.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000007/PSM1 --source_traj_path "./pose_results/surgpose_000007_PSM1.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000008/PSM1 --source_traj_path "./pose_results/surgpose_000030_PSM1.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000009/PSM1 --source_traj_path "./pose_results/surgpose_000031_PSM1.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000010/PSM1 --source_traj_path "./pose_results/surgpose_000032_PSM1.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000011/PSM1 --source_traj_path "./pose_results/surgpose_000033_PSM1.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000000/PSM3 --source_traj_path "./pose_results/surgpose_000000_PSM3.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000001/PSM3 --source_traj_path "./pose_results/surgpose_000001_PSM3.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000002/PSM3 --source_traj_path "./pose_results/surgpose_000002_PSM3.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000003/PSM3 --source_traj_path "./pose_results/surgpose_000003_PSM3.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000004/PSM3 --source_traj_path "./pose_results/surgpose_000004_PSM3.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000005/PSM3 --source_traj_path "./pose_results/surgpose_000005_PSM3.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000006/PSM3 --source_traj_path "./pose_results/surgpose_000006_PSM3.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000007/PSM3 --source_traj_path "./pose_results/surgpose_000007_PSM3.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000008/PSM3 --source_traj_path "./pose_results/surgpose_000030_PSM3.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000009/PSM3 --source_traj_path "./pose_results/surgpose_000031_PSM3.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000010/PSM3 --source_traj_path "./pose_results/surgpose_000032_PSM3.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000011/PSM3 --source_traj_path "./pose_results/surgpose_000033_PSM3.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
 
 ./synthetic_tracking.sh
 """
@@ -613,8 +392,9 @@ if __name__ == "__main__":
 
         parser = argparse.ArgumentParser()
 
-        parser.add_argument("--target_dir", type=str, default=target_dir)
-        parser.add_argument("--traj_len", type=int, default=500)
+        parser.add_argument("--target_dir", type=str, default="./data/synthetic/000000/PSM1")
+        parser.add_argument("--source_traj_path", type=str, default="./pose_results/surgpose_000000_PSM1.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth")
+        parser.add_argument("--traj_len", type=int, default=1000)
         parser.add_argument("--interval", type=int, default=50)
         args_cmd = parser.parse_args()
         target_dir = args_cmd.target_dir
@@ -650,65 +430,89 @@ if __name__ == "__main__":
         joint_angles_seq_all = []
         position_seq_all = []
 
-        # Initial pose
-        mix_angle_curr, joint_angles_curr, position_curr, quat_curr = intialize_pose(
-            model, robot_renderer, args, joints_lb, joints_ub
-        )
+        ref_traj = torch.load(args_cmd.source_traj_path)
+        ref_cTr_traj = ref_traj["cTr"]                 # (T, 6) axis-angle + translation
+        ref_joints_traj = ref_traj["joint_angles"][:, :3]
 
-        axis_angle_curr = mix_angle_to_axis_angle(mix_angle_curr.unsqueeze(0)).squeeze(0)
-        quat_curr = kornia.geometry.conversions.axis_angle_to_quaternion(
-            axis_angle_curr.unsqueeze(0)
-        ).squeeze(0)
-        quat_curr = kornia.geometry.quaternion.Quaternion(quat_curr)
-        quat_ref_curr = quat_curr
+        # ------------------------------------------------
+        # Convert rotations to mix-angle space (once!)
+        # ------------------------------------------------
+        ref_mix_traj = axis_angle_to_mix_angle(ref_cTr_traj[:, :3])
+        ref_pos_traj = ref_cTr_traj[:, 3:]
 
-        num_segments = args_cmd.traj_len // interval
+        T = ref_cTr_traj.shape[0]
+        num_segments = (T - 1) // interval
 
-        for _ in range(num_segments):
+        mix_angle_seq_all = []
+        joint_angles_seq_all = []
+        position_seq_all = []
 
-            # Sample next target pose
-            mix_angle_next, joint_angles_next, position_next, quat_ref_next = intialize_pose(
-                model, robot_renderer, args, joints_lb, joints_ub, reference_quat=quat_ref_curr
-            )
+        # ------------------------------------------------
+        # Subsample indices
+        # ------------------------------------------------
+        sub_idx = torch.arange(0, T, interval, device=device)
+        if sub_idx[-1] != T - 1:
+            sub_idx = torch.cat([sub_idx, torch.tensor([T - 1], device=device)])
 
-            axis_angle_next = mix_angle_to_axis_angle(mix_angle_next.unsqueeze(0)).squeeze(0)
-            quat_next = kornia.geometry.conversions.axis_angle_to_quaternion(
-                axis_angle_next.unsqueeze(0)
-            ).squeeze(0)
-            quat_next = kornia.geometry.quaternion.Quaternion(quat_next)
+        # ------------------------------------------------
+        # Unwrap mix-angle trajectory (IMPORTANT)
+        # ------------------------------------------------
+        # unwrap along time, per angle dimension
+        ref_mix_sub = ref_mix_traj[sub_idx]                      # (S, 3)
+        # ref_mix_sub_unwrapped = torch.unwrap(ref_mix_sub, dim=0)
+        ref_mix_sub_unwrapped = torch.from_numpy(np.unwrap(ref_mix_sub.cpu().numpy(), axis=0)).to(torch.float32).to(device)
 
+        for k in range(len(sub_idx) - 1):
+
+            # -----------------------------
+            # Current / next (from reference)
+            # -----------------------------
+            mix_angle_curr = ref_mix_sub_unwrapped[k]
+            mix_angle_next = ref_mix_sub_unwrapped[k + 1]
+
+            position_curr = ref_pos_traj[sub_idx[k]]
+            position_next = ref_pos_traj[sub_idx[k + 1]]
+
+            joint_angles_curr = ref_joints_traj[sub_idx[k]]
+            joint_angles_next = ref_joints_traj[sub_idx[k + 1]]
+
+            # Interpolation parameter
             t = torch.linspace(0, 1, interval, device=device)
 
-            # --- Rotation: SLERP ---
-            mix_chunk = []
-            for ti in t:
-                quat_t = quat_curr.slerp(quat_next, ti).q
-                axis_angle_t = kornia.geometry.conversions.quaternion_to_axis_angle(
-                    quat_t
-                ).squeeze(0)
-                mix_angle_t = axis_angle_to_mix_angle(axis_angle_t.unsqueeze(0)).squeeze(0)
-                mix_chunk.append(mix_angle_t)
+            # ============================================================
+            # Rotation: interpolate directly in mix-angle space
+            # ============================================================
+            mix_vel = torch.zeros_like(mix_angle_curr)
+            mix_chunk = cubic_hermite(
+                mix_angle_curr,
+                mix_angle_next,
+                mix_vel,
+                mix_vel,
+                t,
+            )
 
-            mix_chunk = torch.stack(mix_chunk, dim=0)
-
-            # --- Joints: cubic spline ---
+            # ============================================================
+            # Joints: cubic Hermite
+            # ============================================================
             joint_vel = torch.zeros_like(joint_angles_curr)
             joint_chunk = cubic_hermite(
                 joint_angles_curr,
                 joint_angles_next,
                 joint_vel,
                 joint_vel,
-                t
+                t,
             )
 
-            # --- Position: cubic spline ---
+            # ============================================================
+            # Position: cubic Hermite
+            # ============================================================
             pos_vel = torch.zeros_like(position_curr)
             pos_chunk = cubic_hermite(
                 position_curr,
                 position_next,
                 pos_vel,
                 pos_vel,
-                t
+                t,
             )
 
             # Append
@@ -716,13 +520,9 @@ if __name__ == "__main__":
             joint_angles_seq_all.append(joint_chunk)
             position_seq_all.append(pos_chunk)
 
-            # Update current pose
-            mix_angle_curr = mix_angle_next
-            joint_angles_curr = joint_angles_next
-            position_curr = position_next
-            quat_curr = quat_next
-            quat_ref_curr = quat_ref_next
-
+        # ------------------------------------------------
+        # Concatenate full trajectories
+        # ------------------------------------------------
         mix_angle_seq = torch.cat(mix_angle_seq_all, dim=0)
         joint_angles_seq = torch.cat(joint_angles_seq_all, dim=0)
         position_seq = torch.cat(position_seq_all, dim=0)
@@ -734,27 +534,22 @@ if __name__ == "__main__":
 
         # Unwrap the mix angles for smoothness
         for i in range(3):
-            diffs = np.diff(mix_angle_seq_np[:, i])
-            for j in range(len(diffs)):
-                if diffs[j] >  np.pi:
-                    mix_angle_seq_np[j+1:, i] -= 2 * np.pi
-                elif diffs[j] < -np.pi:
-                    mix_angle_seq_np[j+1:, i] += 2 * np.pi
+            mix_angle_seq_np[:, i] = np.unwrap(mix_angle_seq_np[:, i])
 
         mix_angle_seq_np = ou_perturb_trajectory(
             mix_angle_seq_np,
             rho=0.99,
-            sigma=np.array([0.02, 0.2, 0.02], dtype=np.float32),
+            sigma=np.array([0.01, 0.03, 0.01], dtype=np.float32),
         )
         joint_angles_seq_np = ou_perturb_trajectory(
             joint_angles_seq_np,
             rho=0.99,
-            sigma=np.array([0.2, 0.2, 0.2], dtype=np.float32),
+            sigma=np.array([0.02, 0.02, 0.02], dtype=np.float32),
         )
         position_seq_np = ou_perturb_trajectory(
             position_seq_np,    
             rho=0.99,
-            sigma=np.array([0.005, 0.005, 0.005], dtype=np.float32),
+            sigma=np.array([0.002, 0.002, 0.002], dtype=np.float32),
         )
 
         # Apply OneEuro filter to smooth the trajectory
@@ -763,8 +558,10 @@ if __name__ == "__main__":
         ).to(torch.float32).cpu().numpy() # [N, 10]
         filtered_seq = np.zeros_like(full_seq)
         filter = OneEuroFilter(
-            correction=False, f_min=0.1, alpha_d=0.1, beta=1.,
-            lengthscales=np.array([5., 5., 5., 5., 5., 5., 10., 10., 10., 10.]),
+            f_min=0.5, # higher to reduce lag
+            alpha_d=0.3, # smoothing factor for the derivative
+            beta=0.3, # higher to reduce lag
+            kappa=0.
         )
         filter.reset(full_seq[0])
         filtered_seq[0] = full_seq[0]
@@ -955,13 +752,13 @@ if __name__ == "__main__":
                     noisy_joint = joints
                     noisy_jaw = jaw
 
-                    joint_noise = np.random.normal(scale=0.1, size=10).astype(np.float32)
-                    jaw_noise = np.random.normal(scale=0.15, size=1).astype(np.float32)
+                    joint_noise = np.random.normal(scale=0.02, size=10).astype(np.float32)
+                    jaw_noise = np.random.normal(scale=0.02, size=1).astype(np.float32)
                 else:
                     noisy_joint = joints + joint_noise
                     noisy_jaw = jaw + jaw_noise
-                    joint_noise = joint_noise * 0.6 + np.random.normal(scale=0.1, size=10).astype(np.float32) * (1-0.6**2)**0.5
-                    jaw_noise = jaw_noise * 0.6 + np.random.normal(scale=0.15, size=1).astype(np.float32) * (1-0.6**2)**0.5
+                    joint_noise = joint_noise * 0.6 + np.random.normal(scale=0.02, size=10).astype(np.float32) * (1-0.6**2)**0.5
+                    jaw_noise = jaw_noise * 0.6 + np.random.normal(scale=0.02, size=1).astype(np.float32) * (1-0.6**2)**0.5
 
                 # Save
                 np.save(joint_path, noisy_joint)

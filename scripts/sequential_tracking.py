@@ -63,7 +63,6 @@ def parseArgs():
     parser.add_argument("--sample_number", type=int, default=200)
     parser.add_argument("--use_nvdiffrast", action="store_true")
     parser.add_argument("--use_bo_initializer", action="store_true") # Use Bayesian optimization for initialization (do not rely on joint angle readings)
-    parser.add_argument("--use_bbox_optimizer", action="store_true") # Use XNES for refinement of initialization
     parser.add_argument("--searcher", type=str, default="CMA-ES", choices=["CMA-ES", "XNES", "Gradient"])  # Search algorithm to use
     parser.add_argument("--online_iters", type=int, default=10)  # Number of iterations for online tracking
     parser.add_argument("--tracking_visualization", action="store_true")  # Whether to visualize the tracking process
@@ -95,8 +94,6 @@ def parseArgs():
     parser.add_argument('--contour_tip_net_path', type=str, default='./ContourTipNet/models/cnn_model.pth') # path to the ContourTipNet model
 
     parser.add_argument('--popsize', type=int, default=70)
-
-    parser.add_argument('--use_gt_kpts', type=str2bool, default=False) # whether to use ground truth keypoints if available 
 
     parser.add_argument('--filter_option', type=str, default="Kalman", choices=["None", "OneEuro", "OneEuro_orig", "Kalman"]) # which variables to filter
 
@@ -189,19 +186,6 @@ def read_data(args, args_ctrnet=None):
     """
     Read the frames and relevant data from the data directory.
     """
-    # if args.use_contour_tip_net:
-    #     contour_tip_net = ContourTipNet(
-    #         feature_dim=6,
-    #         max_len=200
-    #     ).to("cuda:0")
-    #     contour_tip_net.load_state_dict(
-    #         th.load(
-    #             args.contour_tip_net_path, 
-    #             map_location="cuda:0"
-    #         )
-    #     )
-    #     contour_tip_net.eval()
-
     data_lst = []
 
     data_dir = os.path.join(args.data_dir, args.difficulty)
@@ -243,14 +227,20 @@ def read_data(args, args_ctrnet=None):
 
         # Get reference key points
         kpts_path = os.path.join(frame_dir, "keypoints_" + XXXX + ".npy")
-        if (i == args.frame_start or args.use_gt_kpts) and os.path.exists(kpts_path):
-            if i == args.frame_start:
-                print("[Using ground truth keypoints for initialization.]")
+        if i == args.frame_start and not os.path.exists(kpts_path):
+            raise ValueError(f"No keypoints file found for the first frame in {frame_dir}, initialization requires reference keypoints!")
+        if i == args.frame_start:
+            ref_keypoints = np.load(kpts_path)
+        elif not args.use_contour_tip_net:
+            ref_keypoints = get_reference_keypoints_auto(ref_mask_path, num_keypoints=2) # if not using ContourTipNet, use auto-detected keypoints for the rest of the frames
+        elif os.path.exists(kpts_path):
             ref_keypoints = np.load(kpts_path)
         else:
-            ref_keypoints = get_reference_keypoints_auto(ref_mask_path, num_keypoints=2)
+            ref_keypoints = get_reference_keypoints_auto(ref_mask_path, num_keypoints=2) # if not using ContourTipNet, use auto-detected keypoints for the rest of the frames
+        # print(np.load(kpts_path) if os.path.exists(kpts_path) else "No keypoints file found, using auto-detected keypoints.")
+        # print(f"Reference keypoints for frame {i}: {ref_keypoints}")
         ref_keypoints = torch.tensor(ref_keypoints).squeeze().float().cuda()
-            
+        # ref_keypoints = ref_keypoints / args.downscale_factor
 
         # Get joint angles
         joint_path = os.path.join(frame_dir, "joint_" + XXXX + ".npy")
@@ -261,6 +251,8 @@ def read_data(args, args_ctrnet=None):
             raise ValueError(f"No jaw angles found in {frame_dir}")
         joints = np.load(joint_path)
         jaw = np.load(jaw_path)
+        if jaw.ndim == 0:
+            jaw = np.array([jaw]) # make it 1D
         joint_angles_np = np.array(
             [joints[4], joints[5], jaw[0] / 2, jaw[0] / 2], dtype=np.float32
         )
@@ -271,14 +263,20 @@ def read_data(args, args_ctrnet=None):
         # Get optimized pose and joint angles
         optim_ctr_path = os.path.join(frame_dir, "optimized_ctr.npy")
         optim_joint_path = os.path.join(frame_dir, "optimized_joint_angles.npy")
-        optim_ctr_np = np.load(optim_ctr_path)
-        optim_joint_angles_np = np.load(optim_joint_path)
-        optim_ctr = th.tensor(
-            optim_ctr_np, requires_grad=False, dtype=th.float32
-        ).cuda()
-        optim_joint_angles = th.tensor(
-            optim_joint_angles_np, requires_grad=False, dtype=th.float32
-        ).cuda()
+        if not os.path.exists(optim_ctr_path):
+            optim_ctr = None
+        else:
+            optim_ctr_np = np.load(optim_ctr_path)
+            optim_ctr = th.tensor(
+                optim_ctr_np, requires_grad=False, dtype=th.float32
+            ).cuda()
+        if not os.path.exists(optim_joint_path):
+            optim_joint_angles = None
+        else:
+            optim_joint_angles_np = np.load(optim_joint_path)
+            optim_joint_angles = th.tensor(
+                optim_joint_angles_np, requires_grad=False, dtype=th.float32
+            ).cuda()
 
         data = {
             # "frame": frame,
@@ -287,8 +285,8 @@ def read_data(args, args_ctrnet=None):
             "ref_mask_path": ref_mask_path,
             "ref_keypoints": ref_keypoints.clone(),
             "joint_angles": joint_angles.clone(),
-            "optim_ctr": optim_ctr.clone(),
-            "optim_joint_angles": optim_joint_angles.clone(),
+            "optim_ctr": optim_ctr.clone() if optim_ctr is not None else None,
+            "optim_joint_angles": optim_joint_angles.clone() if optim_joint_angles is not None else None,
         }
         # print(data["joint_angles"], joints, jaw)
         data_lst.append(data)
@@ -320,6 +318,8 @@ def initialization(model, init_data, mesh_files):
     joint_angles_read = joint_angles.clone() 
     model.get_joint_angles(joint_angles)
     # robot_mesh = robot_renderer.get_robot_mesh(joint_angles)
+
+    # print(init_data["ref_mask_path"])
 
     bo_batch_problem = BayesOptBatchProblem(
         model=model,
@@ -429,7 +429,7 @@ if __name__ == "__main__":
     args = parseArgs()
     ctrnet_args = parseCtRNetArgs()
 
-    cache_filename = f"./data/cached_initialization/{args.data_dir}_{args.difficulty}_{args.frame_start}.pth"
+    cache_filename = f"./data/cached_initialization/{args.data_dir.replace('/', '_')}_{args.difficulty.replace('/', '_')}_{args.frame_start}.pth"
     args.data_dir = os.path.join("./data", args.data_dir)
 
     ctrnet_args.use_nvdiffrast = args.use_nvdiffrast
@@ -550,7 +550,7 @@ if __name__ == "__main__":
         )
 
         # Print tracking results for each frame
-        for i in range(1, len(data_lst)):
+        for i in range(1, len(data_lst), 100):  # Print every 10 frames
             print(f"Frame {i}: Loss = {loss_seq[i-1].item():.4f}, Time = {time_seq[i-1].item():.4f} seconds")
 
         # Visualize the tracking results
@@ -563,180 +563,26 @@ if __name__ == "__main__":
                 cv2.imwrite(overlay_path, overlay)
 
         # Print the average MSE and time
-        avg_loss = np.mean(loss_seq[1:].cpu().numpy())
-        avg_time = np.mean(time_seq[1:].cpu().numpy()) # remove the first frame as it is the initialization frame
-        print(f"Average Loss: {avg_loss:.4f}")
-        print(f"Average Time: {avg_time:.4f} seconds")
-        print("Tracking completed.")
+        if len(loss_seq) > 10:
+            avg_loss = np.mean(loss_seq[10:].cpu().numpy())
+            avg_time = np.mean(time_seq[10:].cpu().numpy()) # remove the first frame as it is the initialization frame
+            print(f"Average Loss: {avg_loss:.4f}")
+            print(f"Average Time: {avg_time:.4f} seconds")
+            print("Tracking completed.")
 
-        save_path = f"./pose_results/{args.difficulty}_tracking_results_iters50.pth"
-        torch.save({'cTr': cTr_seq, 'joint_angles': joint_angles_seq}, save_path)
-
-        # Visualize if using surgpose data (only the four joint angles)
-        if args.tracking_visualization and args.data_dir.startswith("./data/surgpose"):
-            matplotlib.use('Agg')
-
-            # Read ground truth joint angles
-            idx, machine_name = args.difficulty.split('_')
-            idx = int(idx[3:])  # Extract the numeric part after 'bag'
-            idx_str = f"{idx:06d}"
-            gt_joint_filename = f"./data/surgpose/{idx_str}/api_jp_data.yaml"
-            gt_gripper_angle_filename = "./data/surgpose/gripper_angle.yaml"
-
-            est_joint_angles = joint_angles_seq.cpu().numpy()
-
-            # Load the joint angles from the YAML files
-            with open(gt_joint_filename, 'r') as f:
-                joint_data = yaml.safe_load(f)
-            gt_joint_angles_lst = []
-            for i in range(args.frame_start+1, args.frame_end):
-                joint_i = joint_data[str(i)][machine_name]
-                gt_joint_angles_lst.append(joint_i)
-            gt_joint_angles = np.stack(gt_joint_angles_lst, axis=0)  # (N, 6)
-
-            # Load ground truth gripper angles
-            with open(gt_gripper_angle_filename, 'r') as f:
-                gt_gripper_angles_lst = yaml.safe_load(f)[idx_str][machine_name]
-            gt_gripper_angles = np.stack(gt_gripper_angles_lst[args.frame_start+1:args.frame_end], axis=0)  # (N,)
-
-            # Determine the sign for wrist pitch and wrist yaw that gives the smallest error
-            sign_options = [1, -1]
-            min_error = float('inf')
-            best_sign = None
-            for sign_c in sign_options:
-                wrist_pitch_error = np.mean((sign_c * est_joint_angles[:, 0] - gt_joint_angles[:, 4]) ** 2)
-                wrist_yaw_error = np.mean((sign_c * est_joint_angles[:, 1] - gt_joint_angles[:, 5]) ** 2)
-                total_error = wrist_pitch_error + wrist_yaw_error
-                if total_error < min_error:
-                    min_error = total_error
-                    best_sign = sign_c
-            sign = best_sign
-
-            joint_names = ['Wrist Pitch', 'Wrist Yaw', 'Jaw']
-
-            plt.figure(figsize=(10, 6))
-            # Wrist Pitch
-            plt.subplot(3, 1, 1)
-            plt.plot(sign * est_joint_angles[:, 0], label='Estimated', color='b')
-            plt.plot(gt_joint_angles[:, 4], label='Ground Truth', color='g')
-            plt.title('Wrist Pitch Angle')
-            plt.xlabel('Frame')
-            plt.ylabel('Angle (rad)')
-            plt.legend()
-            plt.grid()
-            # Wrist Yaw
-            plt.subplot(3, 1, 2)
-            plt.plot(sign * est_joint_angles[:, 1], label='Estimated', color='b')
-            plt.plot(gt_joint_angles[:, 5], label='Ground Truth', color='g')
-            plt.title('Wrist Yaw Angle')
-            plt.xlabel('Frame')
-            plt.ylabel('Angle (rad)')
-            plt.legend()
-            plt.grid()
-            # Jaw
-            plt.subplot(3, 1, 3)
-            plt.plot(2 * est_joint_angles[:, 2], label='Estimated', color='b')
-            plt.plot(gt_gripper_angles[:], label='Ground Truth', color='g')
-            plt.title('Jaw Angle')
-            plt.xlabel('Frame')
-            plt.ylabel('Angle (rad)')
-            plt.legend()
-            plt.grid()
-            
-            plt.tight_layout()
-
-            # Save the figure
-            plot_save_path = f"./pose_results/{args.difficulty}_tracking_results.png"
-            plt.savefig(plot_save_path)
-
-        # Visualize if using synthetic data
-        if args.tracking_visualization and args.data_dir.startswith("./data/synthetic"):
-            matplotlib.use('Agg')
-
-            # Plot the prediction results of the 10 dimensions over time
-            ref_cTr_seq = torch.cat(
-                [
-                    torch.cat(
-                        [
-                            data_lst[i]["optim_ctr"].unsqueeze(0),
-                            data_lst[i]["optim_joint_angles"].unsqueeze(0)
-                        ],
-                        dim=1
-                    ) for i in range(len(data_lst))
-                ],
-                dim=0
-            )
-
-            # Convert to mixed angle representations
-            cTr_seq[:, :3] = axis_angle_to_mix_angle(cTr_seq[:, :3])
-            ref_cTr_seq[:, :3] = axis_angle_to_mix_angle(ref_cTr_seq[:, :3])
-
-            ref_joint_angles = torch.stack([data_lst[i]["optim_joint_angles"] for i in range(len(data_lst))],dim=0)
-
-            noisy_joint_angles = torch.stack([data_lst[i]["joint_angles"] for i in range(len(data_lst))],dim=0)
-
-            # Create figure with 10 subplots (5 rows x 2 columns)
-            fig, axs = plt.subplots(5, 2, figsize=(10, 10), sharex=True)
-            if args.downscale_factor == 1:
-                fig.suptitle(f"Tracking Results Over Time per Dimension ({args.online_iters} Iters/Frame)", fontsize=16)
+        # Save the results (label the setup including searcher, number of online iterations, etc.)
+        # save_path = f"./pose_results/{args.difficulty.replace('/', '_')}_tracking_results.pth"
+        data_label = f"{'surgpose' if args.data_dir.startswith('./data/surgpose') else 'synthetic'}_{args.difficulty.replace('/', '_')}"
+        joint_str = 'wo_joint_angles' if args.use_prev_joint_angles else 'w_joint_angles'
+        pts_loss_str = 'w_pts_loss' if args.use_pts_loss else 'wo_pts_loss'
+        app_loss_str = 'w_app_loss' if args.app_weight > 0 else 'wo_app_loss'
+        kpts_det_str = "wo_kpts_det"
+        if args.use_pts_loss:
+            if args.use_contour_tip_net:
+                kpts_det_str = "w_tipnet"
             else:
-                fig.suptitle(f"Tracking Results Over Time per Dimension ({args.online_iters} Iters/Frame, Downscaled by {args.downscale_factor})", fontsize=16)
-
-            # Flatten axes array for easy iteration
-            axs = axs.flatten()
-
-            dim_name = ["Alpha", "Beta", "Gamma", "X", "Y", "Z", "Wrist Pitch", "Wrist Yaw", "Jaw 1", "Jaw 2"]
-
-            # Plot each dimension in its own subplot
-            for j in range(6):
-                ax = axs[j]
-
-                if j < 3:
-                    # Unwrap angles for better visualization
-                    pred = np.unwrap(cTr_seq[:, j].cpu().numpy(), axis=0)
-                    ref  = np.unwrap(ref_cTr_seq[1:, j].cpu().numpy(), axis=0)
-
-                    # Align global phase
-                    k = np.round(np.mean((ref - pred) / (2*np.pi)))
-                    offset = 2 * np.pi * k
-                    pred_aligned = pred + offset
-                else:
-                    pred_aligned = cTr_seq[:, j].cpu().numpy()
-                    ref = ref_cTr_seq[1:, j].cpu().numpy()
-
-                ax.plot(pred_aligned, label='Predicted', linewidth=1.5)
-                ax.plot(ref, label='Reference', linestyle='--', linewidth=1.5)
-
-                ax.set_title(dim_name[j])
-                ax.grid(True, alpha=0.4)
-
-            for j in range(6, 10):
-                ax = axs[j]
-                ax.plot(joint_angles_seq[:, j-6].cpu().numpy(), label='Predicted', linewidth=1.5)
-                ax.plot(ref_joint_angles[1:, j-6].cpu().numpy(), label='Reference', linestyle='--', linewidth=1.5)
-                if not args.use_prev_joint_angles:
-                    ax.plot(noisy_joint_angles[1:, j-6].cpu().numpy(), label='Noisy Input', linestyle=':', linewidth=1.5, color='gray')
-                ax.set_title(dim_name[j])
-                ax.grid(True, alpha=0.4)
-
-            # Add common labels
-            fig.text(0.04, 0.5, 'cTr Values', va='center', rotation='vertical', fontsize=14)
-
-            # Add a single legend below all subplots
-            fig.legend(
-                ['Predicted', 'Reference', 'Noisy Input'] if not args.use_prev_joint_angles else ['Predicted', 'Reference'] ,  # Labels
-                loc='lower center',          # Position
-                bbox_to_anchor=(0.5, 0.02), # Fine-tune position (x, y)
-                ncol=3 if not args.use_prev_joint_angles else 2,                     # Number of columns in legend
-                frameon=True,               # Add a frame
-                fontsize=12                 # Adjust font size
-            )
-
-            # Adjust layout
-            plt.tight_layout(rect=[0.03, 0.03, 1, 0.98])  # Make space for suptitle and labels
-            # plt.show()
-
-            # Save the figure
-            plot_save_path = f"./pose_results/{args.difficulty}_tracking_results.png"
-            fig.savefig(plot_save_path)
-
+                kpts_det_str = "w_opencv"
+        filter_str = "no_filter" if not args.use_filter else args.filter_option
+        save_path = f"/{data_label}.{args.searcher}.{args.online_iters}.{joint_str}.{pts_loss_str}.{kpts_det_str}.{app_loss_str}.{filter_str}.pth"
+        save_path = "./pose_results" + save_path
+        torch.save({'cTr': cTr_seq, 'joint_angles': joint_angles_seq, 'time': time_seq}, save_path)

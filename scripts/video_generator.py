@@ -15,11 +15,11 @@ if __name__ == '__main__':
 
     # === Configuration ===
     image_folder = './tracking'           # Folder containing overlay_*.png
-    output_gif = f'{args.data_type}_bag{args.bag_id}.gif'           # Output file
+    output_gif = f'./GIFs/{args.data_type}_bag{args.bag_id}.gif'           # Output file
     title_lines = [
         # 'CMA-ES',
-        'Separated CMA-ES',
-        'Bi-manual Tracking',
+        'CMA-ES',
+        # 'Bi-manual Tracking',
         f'{args.iters_per_frame} iters/frame',
         f'{args.data_type.capitalize()}: Bag {args.bag_id}',
         # 'Less pts loss weight',
@@ -67,6 +67,9 @@ if __name__ == '__main__':
         # Convert BGR to RGB and store frame
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         gif_frames.append(Image.fromarray(rgb_frame))
+
+    # Make sure output directory exists
+    os.makedirs(os.path.dirname(output_gif), exist_ok=True)
 
     # === Save as GIF ===
     gif_frames[0].save(
