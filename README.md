@@ -1,17 +1,21 @@
 # Conda environment setup
 
 ```
-conda create --name bboxcali python=3.10
-conda activate bboxcali
+conda create --name online_dvrk python=3.10
+conda activate online_dvrk
 pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 pip install -r requirements.txt
-pip install "git+https://github.com/facebookresearch/pytorch3d.git"
-pip install evotorch
 pip install FastGeodis --no-build-isolation
-pip install filterpy
 ```
 
-You also need to install [NvDiffRast](https://nvlabs.github.io/nvdiffrast/) following the instructions below (for Linux):
+You also need to install [PyTorch3D](https://github.com/facebookresearch/pytorch3d) and [NvDiffRast](https://nvlabs.github.io/nvdiffrast/).
+
+For PyTorch3D, try the following instructions:
+```
+pip install "git+https://github.com/facebookresearch/pytorch3d.git"
+```
+
+For NvDiffRast, try the following instructions:
 ```
 git clone https://github.com/NVlabs/nvdiffrast
 cd nvdiffrast
@@ -19,34 +23,61 @@ pip install .
 pip install ninja
 ```
 
-If necessary, to install [Deep Hough Transform](https://github.com/Hanqer/deep-hough-transform) and download the pretrained weights, run
-```
-git config --global url."https://github.com/".insteadOf "git@github.com:"
-git submodule update --init
-cd deep_hough_transform
-wget http://data.kaizhao.net/projects/deep-hough-transform/dht_r50_nkl_d97b97138.pth
-cd model/_cdht
-python setup.py build 
-python setup.py install --user
-```
+# Run benchmarking scripts
 
-# Calibration with NvDiffRast + CMA-ES (instead of differentiable rendering)
+Download the data from https://drive.google.com/file/d/1DBHTH_w-w-WuLFSiENn2cYPDvKj9-2gk/view?usp=sharing and put it under the `./data` folder.
 
-For real-world data, run:
+# Calibrate online videos
+
+## Step 1: Prepare the input video
+
+Place the video at:
+
 ```
-python scripts/sequential_tracing.py --sample_number 500 --final_iters 1000 --online_iters 10 --rotation_parameterization MixAngle --searcher CMA-ES --tracking_visualization --downscale_factor 1 --use_nvdiffrast --use_pts_loss True
+data/online_videos/<video_id>/video.mp4
 ```
 
-For synthetic data (with ground-truth keypoints projections), run:
+Example:
+
 ```
-python scripts/synthetic_tracking.py --use_nvdiffrast --tracking_visualization --rotation_parameterization MixAngle --searcher CMA-ES --downscale_factor 1 --online_iters 5 --use_pts_loss True --use_opencv_kpts False
+data/online_videos/000000/video.mp4
 ```
 
-# Demo
+---
 
-<p float="left">
-  <img src="./data/output_gd_iter30.gif" width="45%" />
-  <img src="./data/output_iter10.gif" width="45%" />
-</p>
+## Step 2: Annotate the first frame (interactive)
 
+Run the video annotator to initialize keypoints and SAM prompts:
 
+```bash
+python scripts/video_annotator.py \
+    --idx 000000 \
+    --machine_label PSM3
+```
+
+**Annotation controls**
+
+- Left click: tool keypoint  
+- SHIFT + left click: foreground SAM prompt  
+- CTRL + left click: background SAM prompt  
+- ENTER: save and continue  
+- `r`: reset annotations  
+- `q` / `ESC`: quit  
+
+---
+
+## Step 3: Run online tracking
+
+After annotation, start online tracking:
+
+```bash
+python scripts/online_tracking.py \
+    --sample_number 1500 \
+    --use_nvdiffrast \
+    --use_bo_initializer \
+    --video_label 000000 \
+    --machine_label PSM3 \
+    --searcher CMA-ES
+```
+
+**Note.** Make sure to modify `parseCtRNetArgs()` so that the image shape and camera intrinsics are consistent with your input data. 
