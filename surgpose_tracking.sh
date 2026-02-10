@@ -7,8 +7,7 @@ TRACKING_OPTS="--rotation_parameterization MixAngle \
 --tracking_visualization \
 --downscale_factor 2 \
 --use_low_res_mesh True \
---use_pts_loss True \
---use_tip_emd_loss False \
+--use_pts_loss False \
 --filter_option Kalman \
 --use_nvdiffrast \
 --batch_size 50 \
@@ -17,8 +16,9 @@ TRACKING_OPTS="--rotation_parameterization MixAngle \
 --sample_number 2000 \
 --online_iters 1 \
 --cos_reparams True \
+--use_contour_tip_net True \
 --final_iters 100 \
---use_prev_joint_angles False \
+--use_prev_joint_angles True \
 --data_dir surgpose"
 
 # Loop over bag_id from 0 to 7 as well as from 30 to 33 with both PSM1 and PSM3

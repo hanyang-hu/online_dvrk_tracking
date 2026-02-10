@@ -8,7 +8,6 @@ TRACKING_OPTS="--rotation_parameterization MixAngle \
 --downscale_factor 2 \
 --use_low_res_mesh True \
 --use_pts_loss True \
---use_tip_emd_loss False \
 --filter_option Kalman \
 --use_nvdiffrast \
 --batch_size 50 \

@@ -72,8 +72,6 @@ def parseArgs():
     parser.add_argument('--use_render_loss', type=str2bool, default=True)
     parser.add_argument('--use_pts_loss', type=str2bool, default=True)
 
-    parser.add_argument('--use_tip_emd_loss', type=str2bool, default=False)
-
     parser.add_argument('--use_prev_joint_angles', type=str2bool, default=False)
 
     parser.add_argument('--rotation_parameterization', type=str, default="AxisAngle", choices=["AxisAngle", "MixAngle"])
@@ -123,9 +121,6 @@ def parseArgs():
 
     if args.rotation_parameterization == "AxisAngle":
         args.stdev_init[:3] = 1e-1
-
-    if args.use_tip_emd_loss:
-        args.dist_weight = 0.
 
     args.stdev_init[6] *= 2 # wrist pitch
     args.stdev_init[7] *= 2 # wrist yaw

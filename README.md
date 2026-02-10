@@ -27,6 +27,11 @@ pip install ninja
 
 Download the data from https://drive.google.com/file/d/1DBHTH_w-w-WuLFSiENn2cYPDvKj9-2gk/view?usp=sharing and put it under the `./data` folder.
 
+**Note.** The benchmarking script is not yet ready. To verify that the environment is set up correctly, you can run:
+```
+bash surgpose_tracking.sh
+```
+
 # Calibrate online videos
 
 ## Step 1: Prepare the input video
