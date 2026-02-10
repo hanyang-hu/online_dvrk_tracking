@@ -25,7 +25,7 @@ pip install ninja
 
 # Run benchmarking scripts
 
-Download the data from https://drive.google.com/file/d/1DBHTH_w-w-WuLFSiENn2cYPDvKj9-2gk/view?usp=sharing and put it under the `./data` folder.
+Download the data from https://drive.google.com/file/d/1PStrCA-Btru2URMU-hTThOaPMVJ679uw/view?usp=drive_link and put it under the `./data` folder.
 
 **Note.** The benchmarking script is not yet ready. To verify that the environment is set up correctly, you can run:
 ```
