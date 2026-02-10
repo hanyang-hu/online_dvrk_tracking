@@ -357,31 +357,31 @@ def ou_perturb_trajectory(
 """
 Generate 12 trajectories corresponding to {0..7} {30..33}
 
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000000/PSM1 --source_traj_path "./pose_results/surgpose_000000_PSM1.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000001/PSM1 --source_traj_path "./pose_results/surgpose_000001_PSM1.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000002/PSM1 --source_traj_path "./pose_results/surgpose_000002_PSM1.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000003/PSM1 --source_traj_path "./pose_results/surgpose_000003_PSM1.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000004/PSM1 --source_traj_path "./pose_results/surgpose_000004_PSM1.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000005/PSM1 --source_traj_path "./pose_results/surgpose_000005_PSM1.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000006/PSM1 --source_traj_path "./pose_results/surgpose_000006_PSM1.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000007/PSM1 --source_traj_path "./pose_results/surgpose_000007_PSM1.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000008/PSM1 --source_traj_path "./pose_results/surgpose_000030_PSM1.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000009/PSM1 --source_traj_path "./pose_results/surgpose_000031_PSM1.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000010/PSM1 --source_traj_path "./pose_results/surgpose_000032_PSM1.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000011/PSM1 --source_traj_path "./pose_results/surgpose_000033_PSM1.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000000/PSM1 --source_traj_path "./pose_results/surgpose_000000_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000001/PSM1 --source_traj_path "./pose_results/surgpose_000001_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000002/PSM1 --source_traj_path "./pose_results/surgpose_000002_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000003/PSM1 --source_traj_path "./pose_results/surgpose_000003_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000004/PSM1 --source_traj_path "./pose_results/surgpose_000004_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000005/PSM1 --source_traj_path "./pose_results/surgpose_000005_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000006/PSM1 --source_traj_path "./pose_results/surgpose_000006_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000007/PSM1 --source_traj_path "./pose_results/surgpose_000007_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000008/PSM1 --source_traj_path "./pose_results/surgpose_000030_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000009/PSM1 --source_traj_path "./pose_results/surgpose_000031_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000010/PSM1 --source_traj_path "./pose_results/surgpose_000032_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000011/PSM1 --source_traj_path "./pose_results/surgpose_000033_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
 
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000000/PSM3 --source_traj_path "./pose_results/surgpose_000000_PSM3.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000001/PSM3 --source_traj_path "./pose_results/surgpose_000001_PSM3.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000002/PSM3 --source_traj_path "./pose_results/surgpose_000002_PSM3.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000003/PSM3 --source_traj_path "./pose_results/surgpose_000003_PSM3.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000004/PSM3 --source_traj_path "./pose_results/surgpose_000004_PSM3.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000005/PSM3 --source_traj_path "./pose_results/surgpose_000005_PSM3.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000006/PSM3 --source_traj_path "./pose_results/surgpose_000006_PSM3.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000007/PSM3 --source_traj_path "./pose_results/surgpose_000007_PSM3.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000008/PSM3 --source_traj_path "./pose_results/surgpose_000030_PSM3.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000009/PSM3 --source_traj_path "./pose_results/surgpose_000031_PSM3.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000010/PSM3 --source_traj_path "./pose_results/surgpose_000032_PSM3.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000011/PSM3 --source_traj_path "./pose_results/surgpose_000033_PSM3.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000000/PSM3 --source_traj_path "./pose_results/surgpose_000000_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000001/PSM3 --source_traj_path "./pose_results/surgpose_000001_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000002/PSM3 --source_traj_path "./pose_results/surgpose_000002_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000003/PSM3 --source_traj_path "./pose_results/surgpose_000003_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000004/PSM3 --source_traj_path "./pose_results/surgpose_000004_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000005/PSM3 --source_traj_path "./pose_results/surgpose_000005_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000006/PSM3 --source_traj_path "./pose_results/surgpose_000006_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000007/PSM3 --source_traj_path "./pose_results/surgpose_000007_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000008/PSM3 --source_traj_path "./pose_results/surgpose_000030_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000009/PSM3 --source_traj_path "./pose_results/surgpose_000031_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000010/PSM3 --source_traj_path "./pose_results/surgpose_000032_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000011/PSM3 --source_traj_path "./pose_results/surgpose_000033_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
 
 ./synthetic_tracking.sh
 """
@@ -393,7 +393,7 @@ if __name__ == "__main__":
         parser = argparse.ArgumentParser()
 
         parser.add_argument("--target_dir", type=str, default="./data/synthetic/000000/PSM1")
-        parser.add_argument("--source_traj_path", type=str, default="./pose_results/surgpose_000000_PSM1.CMA-ES.3.wo_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth")
+        parser.add_argument("--source_traj_path", type=str, default="./pose_results/surgpose_000000_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth")
         parser.add_argument("--traj_len", type=int, default=1000)
         parser.add_argument("--interval", type=int, default=50)
         args_cmd = parser.parse_args()

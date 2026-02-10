@@ -57,7 +57,7 @@ def parseArgs():
     parser.add_argument("--use_nvdiffrast", action="store_true")
     parser.add_argument("--use_bo_initializer", action="store_true") # Use Bayesian optimization for initialization (do not rely on joint angle readings)
     parser.add_argument("--use_bbox_optimizer", action="store_true") # Use XNES for refinement of initialization
-    parser.add_argument("--searcher", type=str, default="CMA-ES", choices=["CMA-ES", "XNES", "SNES", "Gradient", "NelderMead", "RandomSearch", "CEM"])  # Search algorithm to use
+    parser.add_argument("--searcher", type=str, default="CMA-ES", choices=["CMA-ES", "XNES", "Gradient"])  # Search algorithm to use
     parser.add_argument("--online_iters", type=int, default=10)  # Number of iterations for online tracking
     parser.add_argument("--tracking_visualization", action="store_true")  # Whether to visualize the tracking process
     # parser.add_argument("--online_lr", type=float, default=1e-3)  # Learning rate for online tracking
@@ -91,7 +91,9 @@ def parseArgs():
 
     parser.add_argument('--use_gt_kpts', type=str2bool, default=False) # whether to use ground truth keypoints if available 
 
-    parser.add_argument('--use_filter', type=str2bool, default=True) # whether to use one euro filter for pose smoothing
+    # parser.add_argument('--use_filter', type=str2bool, default=True) # whether to use one euro filter for pose smoothing
+    
+    parser.add_argument('--filter_option', type=str, default="Kalman", choices=["None", "OneEuro", "OneEuro_orig", "Kalman"]) # which variables to filter
     parser.add_argument('--cos_reparams', type=str2bool, default=False) # whether to use cosine reparameterization for joint angles in the filter
 
     parser.add_argument('--separate_loss', type=str2bool, default=True) # whether to compute separate loss for two arms
@@ -109,6 +111,8 @@ def parseArgs():
 
     parser.add_argument("--log_interval", type=int, default=1000)  # Logging interval for optimization
     args = parser.parse_args()
+
+    args.use_filter = False if args.filter_option == "None" else True
 
     args.use_mix_angle = (args.rotation_parameterization == "MixAngle")
 
@@ -129,6 +133,10 @@ def parseArgs():
     
     if args.symmetric_jaw:
         args.stdev_init = args.stdev_init[:9]  # only optimize one jaw angle
+
+    if not args.use_prev_joint_angles:
+        args.stdev_init[6:] /= 10. # if using joint angle readings, set the stdev for joint angles to a smaller valu
+
     args.stdev_init = torch.cat([args.stdev_init, args.stdev_init], dim=0)  # for two arms
 
     return args
@@ -192,7 +200,7 @@ def read_data(args, machine_id=None, args_ctrnet=None):
 
     difficulty = args.difficulty
     if machine_id is not None:
-        difficulty = f"{args.difficulty}_{machine_id}" # e.g., bag1, PSM1 -> bag1_PSM1
+        difficulty = f"{args.difficulty}/{machine_id}" # e.g., 000000, PSM1 -> 000000/PSM1
     data_dir = os.path.join(args.data_dir, difficulty)
     if args.frame_end == -1:
         args.frame_end = len([name for name in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, name)) and name.isdigit()])
@@ -232,14 +240,20 @@ def read_data(args, machine_id=None, args_ctrnet=None):
 
         # Get reference key points
         kpts_path = os.path.join(frame_dir, "keypoints_" + XXXX + ".npy")
-        if (i == args.frame_start or args.use_gt_kpts) and os.path.exists(kpts_path):
-            if i == args.frame_start:
-                print("[Using ground truth keypoints for initialization.]")
+        if i == args.frame_start and not os.path.exists(kpts_path):
+            raise ValueError(f"No keypoints file found for the first frame in {frame_dir}, initialization requires reference keypoints!")
+        if i == args.frame_start:
+            ref_keypoints = np.load(kpts_path)
+        elif not args.use_contour_tip_net:
+            ref_keypoints = get_reference_keypoints_auto(ref_mask_path, num_keypoints=2) # if not using ContourTipNet, use auto-detected keypoints for the rest of the frames
+        elif os.path.exists(kpts_path):
             ref_keypoints = np.load(kpts_path)
         else:
-            ref_keypoints = get_reference_keypoints_auto(ref_mask_path, num_keypoints=2)
+            ref_keypoints = get_reference_keypoints_auto(ref_mask_path, num_keypoints=2) # if not using ContourTipNet, use auto-detected keypoints for the rest of the frames
+        # print(np.load(kpts_path) if os.path.exists(kpts_path) else "No keypoints file found, using auto-detected keypoints.")
+        # print(f"Reference keypoints for frame {i}: {ref_keypoints}")
         ref_keypoints = torch.tensor(ref_keypoints).squeeze().float().cuda()
-            
+        # ref_keypoints = ref_keypoints / args.downscale_factor
 
         # Get joint angles
         joint_path = os.path.join(frame_dir, "joint_" + XXXX + ".npy")
@@ -250,6 +264,8 @@ def read_data(args, machine_id=None, args_ctrnet=None):
             raise ValueError(f"No jaw angles found in {frame_dir}")
         joints = np.load(joint_path)
         jaw = np.load(jaw_path)
+        if jaw.ndim == 0:
+            jaw = np.array([jaw]) # make it 1D
         joint_angles_np = np.array(
             [joints[4], joints[5], jaw[0] / 2, jaw[0] / 2], dtype=np.float32
         )
@@ -260,14 +276,24 @@ def read_data(args, machine_id=None, args_ctrnet=None):
         # Get optimized pose and joint angles
         optim_ctr_path = os.path.join(frame_dir, "optimized_ctr.npy")
         optim_joint_path = os.path.join(frame_dir, "optimized_joint_angles.npy")
-        optim_ctr_np = np.load(optim_ctr_path)
-        optim_joint_angles_np = np.load(optim_joint_path)
-        optim_ctr = th.tensor(
-            optim_ctr_np, requires_grad=False, dtype=th.float32
-        ).cuda()
-        optim_joint_angles = th.tensor(
-            optim_joint_angles_np, requires_grad=False, dtype=th.float32
-        ).cuda()
+        if not os.path.exists(optim_ctr_path):
+            optim_ctr = None
+        else:
+            optim_ctr_np = np.load(optim_ctr_path)
+            optim_ctr = th.tensor(
+                optim_ctr_np, requires_grad=False, dtype=th.float32
+            ).cuda()
+        if not os.path.exists(optim_joint_path):
+            optim_joint_angles = None
+        else:
+            optim_joint_angles_np = np.load(optim_joint_path)
+            optim_joint_angles = th.tensor(
+                optim_joint_angles_np, requires_grad=False, dtype=th.float32
+            ).cuda()
+
+        # If optimized joint angles are available, use them to replace the joint angle readings (synthetic trajectory noise is wrongly large)
+        if optim_joint_angles is not None:
+            joint_angles = optim_joint_angles.clone()
 
         data = {
             # "frame": frame,
@@ -276,8 +302,8 @@ def read_data(args, machine_id=None, args_ctrnet=None):
             "ref_mask_path": ref_mask_path,
             "ref_keypoints": ref_keypoints.clone(),
             "joint_angles": joint_angles.clone(),
-            "optim_ctr": optim_ctr.clone(),
-            "optim_joint_angles": optim_joint_angles.clone(),
+            "optim_ctr": optim_ctr.clone() if optim_ctr is not None else None,
+            "optim_joint_angles": optim_joint_angles.clone() if optim_joint_angles is not None else None,
         }
         # print(data["joint_angles"], joints, jaw)
         data_lst.append(data)
@@ -332,9 +358,15 @@ if __name__ == "__main__":
     robot_renderer.set_mesh_visibility([True, True, True, True])
 
     # Initialize the model
-    if args.no_cache or not os.path.exists(cache_left) or not os.path.exists(cache_right):
-        assert False, "No cache file found / args.no_cache is True."
 
+    if args.data_dir.startswith("./data/synthetic"):
+        print("[Using synthetic data, skipping optimization-based initialization...]")
+        cTr_left = data_lst_left[0]["optim_ctr"].to(model.device)
+        joint_angles_left = data_lst_left[0]["optim_joint_angles"].to(model.device)
+        cTr_right = data_lst_right[0]["optim_ctr"].to(model.device)
+        joint_angles_right = data_lst_right[0]["optim_joint_angles"].to(model.device)
+    elif args.no_cache or not os.path.exists(cache_left) or not os.path.exists(cache_right):
+        assert False, "No cache file found / args.no_cache is True."
     else:
         print(f"[Found cache files at {cache_left} and {cache_right}.]")
         cache_left_data = torch.load(cache_left)
@@ -343,6 +375,37 @@ if __name__ == "__main__":
         cTr_right = cache_right_data['cTr'].to(model.device)
         joint_angles_left = cache_left_data['joint_angles'].to(model.device)
         joint_angles_right = cache_right_data['joint_angles'].to(model.device)
+
+    # After initialization, if using joint angle readings, replace the initial joint angles
+    # If the joint angle reading is flipped, rotate around beta by 180 degrees to resolve ambiguity
+    if not args.use_prev_joint_angles:
+        joint_angles_left_input = data_lst_left[0]["joint_angles"].to(model.device)
+        joint_angles_right_input = data_lst_right[0]["joint_angles"].to(model.device)
+
+        # Check if wrist pitch and wrist yaw (first two joints) are flipped around 0
+        wrist_pitch_yaw_left = joint_angles_left[:2]
+        flipped_wrist_pitch_yaw_left = -joint_angles_left[:2]
+
+        if torch.norm(wrist_pitch_yaw_left - joint_angles_left_input[:2]) > torch.norm(flipped_wrist_pitch_yaw_left - joint_angles_left_input[:2]):
+            print("Flipping wrist pitch and yaw for left arm to resolve ambiguity.")
+            joint_angles_left_input[:2] = flipped_wrist_pitch_yaw_left
+            cTr_left[:3] = axis_angle_to_mix_angle(cTr_left[:3].unsqueeze(0)).squeeze(0) # convert to mix angle representation for flipping
+            cTr_left[1] += np.pi  # rotate around beta by 180 degrees
+            cTr_left[:3] = mix_angle_to_axis_angle(cTr_left[:3].unsqueeze(0)).squeeze(0) # convert back to axis angle representation
+
+        joint_angles_left = joint_angles_left_input.clone()
+
+        wrist_pitch_yaw_right = joint_angles_right[:2]
+        flipped_wrist_pitch_yaw_right = -joint_angles_right[:2]
+
+        if torch.norm(wrist_pitch_yaw_right - joint_angles_right_input[:2]) > torch.norm(flipped_wrist_pitch_yaw_right - joint_angles_right_input[:2]):
+            print("Flipping wrist pitch and yaw for right arm to resolve ambiguity.")
+            joint_angles_right_input[:2] = flipped_wrist_pitch_yaw_right
+            cTr_right[:3] = axis_angle_to_mix_angle(cTr_right[:3].unsqueeze(0)).squeeze(0) # convert to mix angle representation for flipping
+            cTr_right[1] += np.pi  # rotate around beta by 180 degrees
+            cTr_right[:3] = mix_angle_to_axis_angle(cTr_right[:3].unsqueeze(0)).squeeze(0) # convert back to axis angle representation
+
+        joint_angles_right = joint_angles_right_input.clone()
 
     # Camera intrinsic matrix
     intr = torch.tensor(
@@ -375,7 +438,7 @@ if __name__ == "__main__":
     gc.collect()
     torch.cuda.empty_cache()
 
-    with maybe_no_grad(args.searcher in ["CMA-ES", "XNES", "SNES", "Nelder-Mead", "RandomSearch", "CEM"]):
+    with maybe_no_grad(args.searcher in ["CMA-ES", "XNES"]):
         tracker = BiManualTracker(
             model=model,
             robot_renderer=robot_renderer,
@@ -409,7 +472,7 @@ if __name__ == "__main__":
                 )
 
             mask_lst.append(torch.stack([data_lst_left[i]["ref_mask"], data_lst_right[i]["ref_mask"]], dim=0)) # (2, H, W)
-            joint_angles_lst.append(torch.stack([data_lst_left[i]["joint_angles"], data_lst_right[i]["joint_angles"]], dim=0))
+            joint_angles_lst.append(torch.stack([data_lst_left[i]["joint_angles"], data_lst_right[i]["joint_angles"]], dim=0)) # (2, 4)
             ref_keypoints_lst.append(ref_keypoints)
             det_line_params_lst.append(det_line_params)
 
@@ -426,7 +489,7 @@ if __name__ == "__main__":
         )
 
         # Print tracking results for each frame
-        for i in range(1, len(data_lst_left)):
+        for i in range(1, len(data_lst_left), 100):  # Print every 10 frames
             print(f"Frame {i}: Loss = {loss_seq[i-1].item():.4f}, Time = {time_seq[i-1].item():.4f} seconds")
 
         # Visualize the tracking results
@@ -439,11 +502,28 @@ if __name__ == "__main__":
                 cv2.imwrite(overlay_path, overlay)
 
         # Print the average MSE and time
-        avg_loss = np.mean(loss_seq[1:].cpu().numpy())
-        avg_time = np.mean(time_seq[1:].cpu().numpy()) # remove the first frame as it is the initialization frame
-        print(f"Average Loss: {avg_loss:.4f}")
-        print(f"Average Time: {avg_time:.4f} seconds")
-        print("Tracking completed.")
+        if len(loss_seq) > 10:
+            avg_loss = np.mean(loss_seq[10:].cpu().numpy())
+            avg_time = np.mean(time_seq[10:].cpu().numpy()) # remove the first frame as it is the initialization frame
+            print(f"Average Loss: {avg_loss:.4f}")
+            print(f"Average Time: {avg_time:.4f} seconds")
+            print("Tracking completed.")
 
-        save_path = f"./pose_results/{args.difficulty}_tracking_results_iters50.pth"
-        torch.save({'cTr': cTr_seq, 'joint_angles': joint_angles_seq}, save_path)
+         # Save the results (label the setup including searcher, number of online iterations, etc.)
+        # save_path = f"./pose_results/{args.difficulty.replace('/', '_')}_tracking_results.pth"
+        data_label = f"{'surgpose' if args.data_dir.startswith('./data/surgpose') else 'synthetic'}_{args.difficulty.replace('/', '_')}"
+        joint_str = 'wo_joint_angles' if args.use_prev_joint_angles else 'w_joint_angles'
+        pts_loss_str = 'w_pts_loss' if args.use_pts_loss else 'wo_pts_loss'
+        app_loss_str = 'w_app_loss' if args.app_weight > 0 else 'wo_app_loss'
+        kpts_det_str = "wo_kpts_det"
+        option_label = 'sep' if args.separate_loss else 'joint'
+        bd_label = 'bd_cmaes' if args.use_bd_cmaes else 'cmaes'
+        if args.use_pts_loss:
+            if args.use_contour_tip_net:
+                kpts_det_str = "w_tipnet"
+            else:
+                kpts_det_str = "w_opencv"
+        filter_str = "no_filter" if not args.use_filter else args.filter_option
+        save_path = f"/BI_MANUAL_{data_label}.{args.searcher}.{args.online_iters}.{joint_str}.{pts_loss_str}.{kpts_det_str}.{app_loss_str}.{filter_str}.{option_label}.{bd_label}.pth"
+        save_path = "./pose_results" + save_path
+        torch.save({'cTr': cTr_seq, 'joint_angles': joint_angles_seq, 'time': time_seq}, save_path)

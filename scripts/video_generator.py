@@ -17,7 +17,7 @@ if __name__ == '__main__':
     image_folder = './tracking'           # Folder containing overlay_*.png
     output_gif = f'./GIFs/{args.data_type}_bag{args.bag_id}.gif'           # Output file
     title_lines = [
-        # 'CMA-ES',
+        # 'Separated CMA-ES',
         'CMA-ES',
         # 'Bi-manual Tracking',
         f'{args.iters_per_frame} iters/frame',
@@ -33,7 +33,7 @@ if __name__ == '__main__':
         # 'Modified One Euro Filter',
         'Kalman Filter',
         # 'Cosine Joint Angle Transform',
-        'No joint angle readings',
+        'with joint angle readings',
     ]
     font = cv2.FONT_HERSHEY_SIMPLEX
     font_scale = 1
@@ -161,7 +161,11 @@ rm -r tracking
 """
 
 # Bi-manual SurgPose data
-python scripts/bimanual_tracking.py --rotation_parameterization MixAngle --searcher CMA-ES --tracking_visualization --downscale_factor 2 --use_low_res_mesh True --use_pts_loss True --use_filter True --use_nvdiffrast --use_bbox_optimizer --batch_size 50 --batch_iters 100 --use_bo_initializer --sample_number 1500 --online_iters 3 --final_iters 100 --use_prev_joint_angles True --difficulty "bag1" --data_dir surgpose --soft_separation False
+python scripts/bimanual_tracking.py --rotation_parameterization MixAngle --searcher CMA-ES --tracking_visualization --downscale_factor 2 --use_low_res_mesh True --use_pts_loss True --filter_option Kalman --use_nvdiffrast --use_bbox_optimizer --batch_size 50 --batch_iters 100 --use_bo_initializer --sample_number 1500 --online_iters 3 --final_iters 100 --use_prev_joint_angles True --difficulty "000000" --data_dir surgpose --soft_separation False
+python scripts/video_generator.py --bag_id 1 --iters_per_frame 3 --data_type surgpose
+rm -r tracking
+
+python scripts/bimanual_tracking.py --rotation_parameterization MixAngle --searcher CMA-ES --tracking_visualization --downscale_factor 2 --use_low_res_mesh True --use_pts_loss True --filter_option Kalman --use_nvdiffrast --use_bbox_optimizer --batch_size 50 --batch_iters 100 --use_bo_initializer --sample_number 1500 --online_iters 3 --final_iters 100 --use_prev_joint_angles True --difficulty "000000" --data_dir synthetic --soft_separation False
 python scripts/video_generator.py --bag_id 1 --iters_per_frame 3 --data_type surgpose
 rm -r tracking
 """

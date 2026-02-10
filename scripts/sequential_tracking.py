@@ -124,6 +124,9 @@ def parseArgs():
     args.stdev_init[7] *= 2 # wrist yaw
     args.stdev_init[8:] *= 2 # jaws
 
+    if not args.use_prev_joint_angles:
+        args.stdev_init[6:] /= 10. # if using joint angle readings, set the stdev for joint angles to a smaller value
+
     return args
 
 
@@ -277,6 +280,10 @@ def read_data(args, args_ctrnet=None):
             optim_joint_angles = th.tensor(
                 optim_joint_angles_np, requires_grad=False, dtype=th.float32
             ).cuda()
+
+        # If optimized joint angles are available, use them to replace the joint angle readings (synthetic trajectory noise is wrongly large)
+        if optim_joint_angles is not None:
+            joint_angles = optim_joint_angles.clone()
 
         data = {
             # "frame": frame,
@@ -467,6 +474,24 @@ if __name__ == "__main__":
         cache = torch.load(cache_filename)
         cTr = cache['cTr'].to(model.device)
         joint_angles = cache['joint_angles'].to(model.device)
+
+    # After initialization, if using joint angle readings, replace the initial joint angles
+    # If the joint angle reading is flipped, rotate around beta by 180 degrees to resolve ambiguity
+    if not args.use_prev_joint_angles:
+        joint_angles_input = data_lst[0]["joint_angles"].to(model.device)
+
+        # Check if wrist pitch and wrist yaw (first two joints) are flipped around 0
+        wrist_pitch_yaw = joint_angles[:2]
+        flipped_wrist_pitch_yaw = -joint_angles[:2]
+
+        if torch.norm(wrist_pitch_yaw - joint_angles_input[:2]) > torch.norm(flipped_wrist_pitch_yaw - joint_angles_input[:2]):
+            print("Flipping wrist pitch and yaw for left arm to resolve ambiguity.")
+            joint_angles_input[:2] = flipped_wrist_pitch_yaw    
+            cTr[:3] = axis_angle_to_mix_angle(cTr[:3].unsqueeze(0)).squeeze(0) # convert to mix angle representation for flipping
+            cTr[1] += np.pi  # rotate around beta by 180 degrees
+            cTr[:3] = mix_angle_to_axis_angle(cTr[:3].unsqueeze(0)).squeeze(0) # convert back to axis angle representation
+
+        joint_angles = joint_angles_input.clone()
 
     # Camera intrinsic matrix
     intr = torch.tensor(

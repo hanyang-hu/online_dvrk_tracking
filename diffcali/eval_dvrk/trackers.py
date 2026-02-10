@@ -29,13 +29,6 @@ from diffcali.utils.cma_es import (
     generate_low_discrepancy_normal,
 )
 from diffcali.utils.pose_tracker import OneEuroFilter, KalmanFilter
-from diffcali.utils.star_convex_loss import (
-    mask_to_edge,
-    precompute_angle_bins,
-    normalize_radial_profile,
-    batch_circular_emd_loss,
-    batch_star_convex_radial_profiles,
-)
 from diffcali.utils.contour_tip_net import ContourTipNet, detect_keypoints, Tip2DNet, detect_keypoints_2d
 
 from evotorch import Problem, SolutionBatch
@@ -857,7 +850,7 @@ class GradientDescentSearcher(SearchAlgorithm):
         # Back-propagate the loss
         self.optimizer.zero_grad()
 
-        loss = self.problem.compute_loss(self.vars)
+        loss = self.problem.compute_loss(self.vars).squeeze()
         
         if loss.shape[0] == 2:
             # Bi-manual case, sum the two losses
@@ -878,7 +871,7 @@ class GradientDescentSearcher(SearchAlgorithm):
             self._pop_best = self.batch[0]
         
         else:
-            loss.squeeze().backward()
+            loss.backward()
             # Update dummy data
             self.batch.set_values(self.vars.detach().clone())
             self.batch.set_evals(loss.unsqueeze(0).detach().clone())
@@ -1117,6 +1110,16 @@ class Tracker:
         cTr = self.problem.cTr_init
         try: 
             joint_angles = self._prev_joint_angles.clone() if self.args.use_prev_joint_angles else joint_angles.clone()
+            # if self.args.use_prev_joint_angles:
+            #     joint_angles = self._prev_joint_angles.clone()
+            # else:
+            #     joint_angles = joint_angles.clone()
+            #     # Flip both wrist yaw and wrist pitch if they are closer to the previous angles after flipping (to handle pose ambiguity)
+            #     _prev_wrist_pitch_yaw = self._prev_joint_angles[:2]
+            #     _curr_wrist_pitch_yaw = joint_angles[:2]
+            #     flipped_wrist_pitch_yaw = -_curr_wrist_pitch_yaw
+            #     if torch.norm(flipped_wrist_pitch_yaw - _prev_wrist_pitch_yaw) < torch.norm(_curr_wrist_pitch_yaw - _prev_wrist_pitch_yaw):
+            #         joint_angles[:2] = flipped_wrist_pitch_yaw
         except:
             raise ValueError(f"Error in cloning joint angles. joint_angles: {joint_angles}, turn on --use_prev_joint_angles to use previous joint angles as initialization.")
         
@@ -1264,6 +1267,16 @@ class Tracker:
             # Initialize the solution with the previous cTr and joint angles
             cTr = self.problem.cTr_init 
             joint_angles = self._prev_joint_angles.clone() if self.args.use_prev_joint_angles else joint_angles.clone()
+            # if self.args.use_prev_joint_angles:
+            #     joint_angles = self._prev_joint_angles.clone()
+            # else:
+            #     joint_angles = joint_angles.clone()
+            #     # Flip both wrist yaw and wrist pitch if they are closer to the previous angles after flipping (to handle pose ambiguity)
+            #     _prev_wrist_pitch_yaw = self._prev_joint_angles[:2]
+            #     _curr_wrist_pitch_yaw = joint_angles[:2]
+            #     flipped_wrist_pitch_yaw = -_curr_wrist_pitch_yaw
+            #     if torch.norm(flipped_wrist_pitch_yaw - _prev_wrist_pitch_yaw) < torch.norm(_curr_wrist_pitch_yaw - _prev_wrist_pitch_yaw):
+            #         joint_angles[:2] = flipped_wrist_pitch_yaw
 
             debug_joint_angles_lst = []
 
@@ -1500,7 +1513,7 @@ class BiManualTracker(Tracker):
         self.separate_loss = args.separate_loss
         self.soft_separation = args.soft_separation
 
-        if args.use_filter:
+        if args.filter_option == "Kalman":
             self.filter_left = self.filter = KalmanFilter(
                 process_noise_pos=np.array([2e-5, 1e-4, 2e-5, 2e-5, 2e-5, 2e-5, 1e-4, 1e-4, 1e-4, 1e-4]),      # scalar or (D,)
                 process_noise_vel=np.array([2e-4, 1e-3, 2e-4, 2e-4, 2e-4, 2e-4, 1e-3, 1e-3, 1e-3, 1e-3]),      # scalar or (D,)
@@ -1510,6 +1523,32 @@ class BiManualTracker(Tracker):
                 process_noise_pos=np.array([2e-5, 1e-4, 2e-5, 2e-5, 2e-5, 2e-5, 1e-4, 1e-4, 1e-4, 1e-4]),      # scalar or (D,)
                 process_noise_vel=np.array([2e-4, 1e-3, 2e-4, 2e-4, 2e-4, 2e-4, 1e-3, 1e-3, 1e-3, 1e-3]),      # scalar or (D,)
                 measurement_noise=np.array([2e-3, 1e-2, 2e-3, 2e-3, 2e-3, 2e-3, 5e-3, 5e-3, 5e-3, 5e-3]) * 0.5,      # scalar or (D,)
+            )
+        elif args.filter_option == "OneEuro":
+            self.filter_left = self.filter = OneEuroFilter(
+                f_min=0.5,
+                alpha_d=0.3, 
+                beta=0.3, 
+                kappa=0.6
+            )
+            self.filter_right = self.filter = OneEuroFilter(
+                f_min=0.5,
+                alpha_d=0.3, 
+                beta=0.3, 
+                kappa=0.6
+            )
+        elif args.filter_option == "OneEuro_orig":
+            self.filter_left = self.filter = OneEuroFilter(
+                f_min=0.8, 
+                alpha_d=0.3, 
+                beta=0.9, 
+                kappa=0.
+            )
+            self.filter_right = self.filter = OneEuroFilter(
+                f_min=0.8, 
+                alpha_d=0.3, 
+                beta=0.9, 
+                kappa=0.
             )
 
         # Different variants of CMA-ES for different settings
@@ -1530,6 +1569,7 @@ class BiManualTracker(Tracker):
 
         optimizer_dict = {
             "CMA-ES": CMAES_searcher, # customized CMA-ES implementation
+            "XNES": XNES,
             "Gradient": GradientDescentSearcher,
         }
         self.optimizer = optimizer_dict[searcher]
@@ -1718,7 +1758,7 @@ class BiManualTracker(Tracker):
             ref_keypoints = ref_keypoints_lst[i][:,:2]
 
             with torch.no_grad():
-                if self.args.use_contour_tip_net:
+                if i != 0 and self.args.use_contour_tip_net:
                     ref_keypoints_left = detect_keypoints_2d(
                         model=self.tip_2d_net,
                         mask=ref_mask[0].detach(),
@@ -1737,7 +1777,7 @@ class BiManualTracker(Tracker):
 
             # Initialize the solution with the previous cTr and joint angles
             cTr = self.problem.cTr_init 
-            joint_angles = self._prev_joint_angles.clone() if self.args.use_prev_joint_angles else joint_angles.clone()
+            joint_angles = joint_angles.clone() if not self.args.use_prev_joint_angles else self._prev_joint_angles.clone()
 
             # Need to make sure joint angles are bounded before transformation
             joint_angles = torch.clamp(joint_angles, self.problem.joint_angles_lb, self.problem.joint_angles_ub)
@@ -1755,31 +1795,52 @@ class BiManualTracker(Tracker):
             else:
                 center_init = torch.cat([cTr, joint_angles], dim=1).reshape(-1)
 
-            # Run the searcher for the specified number of iterations
             # If using synthetic data, do not need initialization
-            if i > 0 or self.args.data_dir.startswith("./data/synthetic"):
-                # Define the searcher and logger
-                searcher = self.optimizer(
-                    problem=self.problem,
-                    stdev_init=1.,
-                    center_init=center_init / self.problem.lengthscales,
-                    popsize=self.args.popsize,
-                    sobol=self.sobol,
-                )
-                logger = BiManualLogger(searcher, interval=1, after_first_step=False) if self.separate_loss else DummyLogger(searcher, interval=1, after_first_step=False)
-                searcher.run(self.num_iters) 
-            else:
-                # Define the searcher and logger
-                searcher = self.optimizer(
-                    problem=self.problem,
-                    stdev_init=1.,
-                    center_init=center_init / self.problem.lengthscales,
-                    popsize=min(self.args.popsize, 30),
-                    sobol=self.sobol,
-                )
-                logger = BiManualLogger(searcher, interval=1, after_first_step=False) if self.separate_loss else DummyLogger(searcher, interval=1, after_first_step=False)
-                # self.problem.lengthscales *= 10. # increase stdev_init for initialization
-                searcher.run(max(self.args.final_iters, self.num_iters))
+            init_flag = not (i > 0 or self.args.data_dir.startswith("./data/synthetic"))
+
+            kwargs = dict(
+                problem=self.problem,
+                stdev_init=1.,
+                center_init=center_init / self.problem.lengthscales,
+                popsize=self.args.popsize if not init_flag else min(self.args.popsize, 30),
+                sobol=self.sobol,
+            )
+            sig = inspect.signature(self.optimizer.__init__)
+            accepted = set(sig.parameters.keys())
+            filtered_kwargs = {
+                k: v for k, v in kwargs.items() if k in accepted
+            }
+
+            searcher = self.optimizer(**filtered_kwargs)
+            logger = BiManualLogger(searcher, interval=1, after_first_step=False) if self.separate_loss else DummyLogger(searcher, interval=1, after_first_step=False)
+
+            searcher.run(self.num_iters if not init_flag else max(self.args.final_iters, self.num_iters))
+
+            # # Run the searcher for the specified number of iterations
+            # # If using synthetic data, do not need initialization
+            # if i > 0 or self.args.data_dir.startswith("./data/synthetic"):
+            #     # Define the searcher and logger
+            #     searcher = self.optimizer(
+            #         problem=self.problem,
+            #         stdev_init=1.,
+            #         center_init=center_init / self.problem.lengthscales,
+            #         popsize=self.args.popsize,
+            #         sobol=self.sobol,
+            #     )
+            #     logger = BiManualLogger(searcher, interval=1, after_first_step=False) if self.separate_loss else DummyLogger(searcher, interval=1, after_first_step=False)
+            #     searcher.run(self.num_iters) 
+            # else:
+            #     # Define the searcher and logger
+            #     searcher = self.optimizer(
+            #         problem=self.problem,
+            #         stdev_init=1.,
+            #         center_init=center_init / self.problem.lengthscales,
+            #         popsize=min(self.args.popsize, 30),
+            #         sobol=self.sobol,
+            #     )
+            #     logger = BiManualLogger(searcher, interval=1, after_first_step=False) if self.separate_loss else DummyLogger(searcher, interval=1, after_first_step=False)
+            #     # self.problem.lengthscales *= 10. # increase stdev_init for initialization
+            #     searcher.run(max(self.args.final_iters, self.num_iters))
 
             # if logger.best_eval > 0.05:
             #     searcher.run(self.num_iters)
@@ -1866,7 +1927,7 @@ class BiManualTracker(Tracker):
         if self.args.use_mix_angle:
             # Always convert output back to axis-angle representation
             for i in range(frame_num):
-                mix_angle = cTr_seq[i][:,:3]
+                mix_angle = cTr_seq[i][:,:3] # (2, 3)
                 axis_angle = mix_angle_to_axis_angle(mix_angle) # Convert to axis-angle
                 cTr_seq[i][:,:3] = axis_angle       # Replace the first 3 elements with axis-angle
 

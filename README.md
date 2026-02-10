@@ -10,12 +10,12 @@ pip install FastGeodis --no-build-isolation
 
 You also need to install [PyTorch3D](https://github.com/facebookresearch/pytorch3d) and [NvDiffRast](https://nvlabs.github.io/nvdiffrast/).
 
-For PyTorch3D, try the following instructions:
+For PyTorch3D, try the following commands:
 ```
 pip install "git+https://github.com/facebookresearch/pytorch3d.git"
 ```
 
-For NvDiffRast, try the following instructions:
+For NvDiffRast, try the following commands:
 ```
 git clone https://github.com/NVlabs/nvdiffrast
 cd nvdiffrast
