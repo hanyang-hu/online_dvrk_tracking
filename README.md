@@ -1,22 +1,30 @@
 # Conda environment setup
 
-```
+The experiments were conducted on **Ubuntu 22.04** with **CUDA 12.6**.  
+Please ensure that your CUDA version matches 12.6 before proceeding.
+
+```bash
 conda create --name online_dvrk python=3.10
 conda activate online_dvrk
-pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+
+# Install PyTorch (CUDA 12.6)
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+
+# Install project dependencies
 pip install -r requirements.txt
 pip install FastGeodis --no-build-isolation
 ```
 
-You also need to install [PyTorch3D](https://github.com/facebookresearch/pytorch3d) and [NvDiffRast](https://nvlabs.github.io/nvdiffrast/).
+You will also need to install [PyTorch3D](https://github.com/facebookresearch/pytorch3d) and [NvDiffRast](https://nvlabs.github.io/nvdiffrast/).  
+If you encounter build issues, try adding the `--no-build-isolation` flag.
 
-For PyTorch3D, try the following commands:
-```
+### Install PyTorch3D
+```bash
 pip install "git+https://github.com/facebookresearch/pytorch3d.git"
 ```
 
-For NvDiffRast, try the following commands:
-```
+### Install NvDiffRast
+```bash
 git clone https://github.com/NVlabs/nvdiffrast
 cd nvdiffrast
 pip install .
