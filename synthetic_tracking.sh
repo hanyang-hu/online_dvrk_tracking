@@ -21,7 +21,7 @@ TRACKING_OPTS="--rotation_parameterization MixAngle \
 --data_dir synthetic"
 
 # Loop over bag_id from 0 to 7 as well as from 30 to 33 with both PSM1 and PSM3
-for BAG_ID in {0..11}; do
+for BAG_ID in {8..15}; do
     echo "Processing bag $BAG_ID ..."
     
     BAG_NAME="$(printf '%06d' $BAG_ID)/PSM1"

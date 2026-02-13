@@ -365,10 +365,6 @@ python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000004/P
 python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000005/PSM1 --source_traj_path "./pose_results/surgpose_000005_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
 python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000006/PSM1 --source_traj_path "./pose_results/surgpose_000006_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
 python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000007/PSM1 --source_traj_path "./pose_results/surgpose_000007_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000008/PSM1 --source_traj_path "./pose_results/surgpose_000030_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000009/PSM1 --source_traj_path "./pose_results/surgpose_000031_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000010/PSM1 --source_traj_path "./pose_results/surgpose_000032_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000011/PSM1 --source_traj_path "./pose_results/surgpose_000033_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
 
 python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000000/PSM3 --source_traj_path "./pose_results/surgpose_000000_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
 python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000001/PSM3 --source_traj_path "./pose_results/surgpose_000001_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
@@ -378,10 +374,27 @@ python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000004/P
 python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000005/PSM3 --source_traj_path "./pose_results/surgpose_000005_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
 python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000006/PSM3 --source_traj_path "./pose_results/surgpose_000006_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
 python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000007/PSM3 --source_traj_path "./pose_results/surgpose_000007_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000008/PSM3 --source_traj_path "./pose_results/surgpose_000030_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000009/PSM3 --source_traj_path "./pose_results/surgpose_000031_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000010/PSM3 --source_traj_path "./pose_results/surgpose_000032_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
-python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000011/PSM3 --source_traj_path "./pose_results/surgpose_000033_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000008/PSM1 --ds_rate 2/1 --source_traj_path "./pose_results/surgpose_000030_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000009/PSM1 --ds_rate 2/1  --source_traj_path "./pose_results/surgpose_000031_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000010/PSM1 --ds_rate 2/1  --source_traj_path "./pose_results/surgpose_000032_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000011/PSM1 --ds_rate 2/1  --source_traj_path "./pose_results/surgpose_000033_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000008/PSM3 --ds_rate 2/1  --source_traj_path "./pose_results/surgpose_000030_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000009/PSM3 --ds_rate 2/1  --source_traj_path "./pose_results/surgpose_000031_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000010/PSM3 --ds_rate 2/1  --source_traj_path "./pose_results/surgpose_000032_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000011/PSM3 --ds_rate 2/1  --source_traj_path "./pose_results/surgpose_000033_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000012/PSM1 --ds_rate 2/2 --source_traj_path "./pose_results/surgpose_000030_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000013/PSM1 --ds_rate 2/2  --source_traj_path "./pose_results/surgpose_000031_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000014/PSM1 --ds_rate 2/2  --source_traj_path "./pose_results/surgpose_000032_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000015/PSM1 --ds_rate 2/2  --source_traj_path "./pose_results/surgpose_000033_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000012/PSM3 --ds_rate 2/2  --source_traj_path "./pose_results/surgpose_000030_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000013/PSM3 --ds_rate 2/2  --source_traj_path "./pose_results/surgpose_000031_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000014/PSM3 --ds_rate 2/2  --source_traj_path "./pose_results/surgpose_000032_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+python scripts/generate_synthetic_data.py --target_dir ./data/synthetic/000015/PSM3 --ds_rate 2/2  --source_traj_path "./pose_results/surgpose_000033_PSM3.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth"
+
 
 ./synthetic_tracking.sh
 """
@@ -396,11 +409,17 @@ if __name__ == "__main__":
         parser.add_argument("--source_traj_path", type=str, default="./pose_results/surgpose_000000_PSM1.CMA-ES.1.w_joint_angles.w_pts_loss.w_tipnet.w_app_loss.Kalman.pth")
         parser.add_argument("--traj_len", type=int, default=1000)
         parser.add_argument("--interval", type=int, default=50)
+        parser.add_argument("--ds_rate", type=str, default="1/1")
         args_cmd = parser.parse_args()
         target_dir = args_cmd.target_dir
 
         # Load model and setup renderer
         args = parseArgs()
+
+        # Extract instructions from ds_rate
+        ds_rate_parts = args_cmd.ds_rate.split('/')
+        args_cmd.ds_rate = int(ds_rate_parts[0])
+        args_cmd.ds_rate_start = int(ds_rate_parts[1])
 
         model = CtRNet(args)
         mesh_files = [
@@ -420,7 +439,7 @@ if __name__ == "__main__":
 
         # Generate reference trajectory by random sampling and interperlotion
         interval = args_cmd.interval
-        assert args_cmd.traj_len % interval == 0
+        assert args_cmd.traj_len % (interval * args_cmd.ds_rate) == 0
         device = "cuda"
 
         joints_lb = torch.tensor([-1.5707, -1.3963, 0.0], dtype=torch.float32).to("cuda")
@@ -441,7 +460,7 @@ if __name__ == "__main__":
         ref_pos_traj = ref_cTr_traj[:, 3:]
 
         T = ref_cTr_traj.shape[0]
-        num_segments = (T - 1) // interval
+        num_segments = (T - 1) // (interval * args_cmd.ds_rate)
 
         mix_angle_seq_all = []
         joint_angles_seq_all = []
@@ -450,9 +469,9 @@ if __name__ == "__main__":
         # ------------------------------------------------
         # Subsample indices
         # ------------------------------------------------
-        sub_idx = torch.arange(0, T, interval, device=device)
-        if sub_idx[-1] != T - 1:
-            sub_idx = torch.cat([sub_idx, torch.tensor([T - 1], device=device)])
+        sub_idx = torch.arange(0, T // args_cmd.ds_rate, interval, device=device)
+        if sub_idx[-1] != T // args_cmd.ds_rate - 1:
+            sub_idx = torch.cat([sub_idx, torch.tensor([T // args_cmd.ds_rate - 1], device=device)])
 
         # ------------------------------------------------
         # Unwrap mix-angle trajectory (IMPORTANT)
@@ -462,6 +481,8 @@ if __name__ == "__main__":
         # ref_mix_sub_unwrapped = torch.unwrap(ref_mix_sub, dim=0)
         ref_mix_sub_unwrapped = torch.from_numpy(np.unwrap(ref_mix_sub.cpu().numpy(), axis=0)).to(torch.float32).to(device)
 
+        starting_point = ref_pos_traj.shape[0] // args_cmd.ds_rate_start * (args_cmd.ds_rate_start - 1)
+
         for k in range(len(sub_idx) - 1):
 
             # -----------------------------
@@ -470,14 +491,14 @@ if __name__ == "__main__":
             mix_angle_curr = ref_mix_sub_unwrapped[k]
             mix_angle_next = ref_mix_sub_unwrapped[k + 1]
 
-            position_curr = ref_pos_traj[sub_idx[k]]
-            position_next = ref_pos_traj[sub_idx[k + 1]]
+            position_curr = ref_pos_traj[sub_idx[k] + starting_point]
+            position_next = ref_pos_traj[sub_idx[k + 1] + starting_point]
 
-            joint_angles_curr = ref_joints_traj[sub_idx[k]]
-            joint_angles_next = ref_joints_traj[sub_idx[k + 1]]
+            joint_angles_curr = ref_joints_traj[sub_idx[k] + starting_point]
+            joint_angles_next = ref_joints_traj[sub_idx[k + 1] + starting_point]
 
             # Interpolation parameter
-            t = torch.linspace(0, 1, interval, device=device)
+            t = torch.linspace(0, 1, interval * args_cmd.ds_rate, device=device)
 
             # ============================================================
             # Rotation: interpolate directly in mix-angle space

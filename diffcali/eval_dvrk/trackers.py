@@ -938,7 +938,7 @@ class Tracker:
                 self.filter = KalmanFilter(
                     process_noise_pos=np.array([2e-5, 1e-4, 2e-5, 2e-5, 2e-5, 2e-5, 1e-4, 1e-4, 1e-4, 1e-4]),      # scalar or (D,)
                     process_noise_vel=np.array([2e-4, 1e-3, 2e-4, 2e-4, 2e-4, 2e-4, 1e-3, 1e-3, 1e-3, 1e-3]),      # scalar or (D,)
-                    measurement_noise=np.array([2e-3, 1e-2, 2e-3, 2e-3, 2e-3, 2e-3, 5e-3, 5e-3, 5e-3, 5e-3]) * ms_factor * 0.5,      # scalar or (D,)
+                    measurement_noise=np.array([2e-3, 1e-2, 2e-3, 2e-3, 2e-3, 2e-3, 5e-3, 5e-3, 5e-3, 5e-3]) * ms_factor,      # scalar or (D,)
                 )
             else:
                 raise ValueError(f"Unknown filter option: {args.filter_option}")
@@ -1517,12 +1517,12 @@ class BiManualTracker(Tracker):
             self.filter_left = self.filter = KalmanFilter(
                 process_noise_pos=np.array([2e-5, 1e-4, 2e-5, 2e-5, 2e-5, 2e-5, 1e-4, 1e-4, 1e-4, 1e-4]),      # scalar or (D,)
                 process_noise_vel=np.array([2e-4, 1e-3, 2e-4, 2e-4, 2e-4, 2e-4, 1e-3, 1e-3, 1e-3, 1e-3]),      # scalar or (D,)
-                measurement_noise=np.array([2e-3, 1e-2, 2e-3, 2e-3, 2e-3, 2e-3, 5e-3, 5e-3, 5e-3, 5e-3]) * 0.5,      # scalar or (D,)
+                measurement_noise=np.array([2e-3, 1e-2, 2e-3, 2e-3, 2e-3, 2e-3, 5e-3, 5e-3, 5e-3, 5e-3]),      # scalar or (D,)
             )
             self.filter_right = self.filter = KalmanFilter(
                 process_noise_pos=np.array([2e-5, 1e-4, 2e-5, 2e-5, 2e-5, 2e-5, 1e-4, 1e-4, 1e-4, 1e-4]),      # scalar or (D,)
                 process_noise_vel=np.array([2e-4, 1e-3, 2e-4, 2e-4, 2e-4, 2e-4, 1e-3, 1e-3, 1e-3, 1e-3]),      # scalar or (D,)
-                measurement_noise=np.array([2e-3, 1e-2, 2e-3, 2e-3, 2e-3, 2e-3, 5e-3, 5e-3, 5e-3, 5e-3]) * 0.5,      # scalar or (D,)
+                measurement_noise=np.array([2e-3, 1e-2, 2e-3, 2e-3, 2e-3, 2e-3, 5e-3, 5e-3, 5e-3, 5e-3]),      # scalar or (D,)
             )
         elif args.filter_option == "OneEuro":
             self.filter_left = self.filter = OneEuroFilter(
