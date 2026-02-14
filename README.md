@@ -1,8 +1,15 @@
-# Conda environment setup
+# Environment setup
 
-The experiments were conducted on **Ubuntu 22.04** with **CUDA 12.6**.  
-Please ensure that your CUDA version matches 12.6 before proceeding.
+This code has been tested on **Ubuntu 22.04** and **Ubuntu 24.04 (WSL 2)** with **CUDA 12.6**.
 
+Please ensure that your CUDA version matches 12.6 before proceeding. If **CUDA 12.6** is installed in `/usr/local/cuda-12.6`, you can explicitly set it with:
+```bash
+export CUDA_HOME=/usr/local/cuda-12.6
+export PATH=$CUDA_HOME/bin:$PATH
+export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+```
+
+To setup the conda environment, run:
 ```bash
 conda create --name online_dvrk python=3.10
 conda activate online_dvrk
@@ -28,8 +35,11 @@ pip install "git+https://github.com/facebookresearch/pytorch3d.git"
 git clone https://github.com/NVlabs/nvdiffrast
 cd nvdiffrast
 pip install .
-pip install ninja
 ```
+
+### Surgical SAM 2
+
+Download the pretrained weights from [sam2.1_hiera_s_endo18](https://drive.google.com/file/d/1DyrrLKst1ZQwkgKM7BWCCwLxSXAgOcMI/view?usp=drive_link), and place it under `./SurgicalSAM2/checkpoints`.
 
 # Run benchmarking scripts
 
@@ -39,6 +49,10 @@ Download the data from https://drive.google.com/file/d/1PStrCA-Btru2URMU-hTThOaP
 ```
 bash surgpose_tracking.sh
 ```
+
+### Grasp Dataset (SuPer)
+
+To compare online tool tracking (with joint angle readings) with the particle filters proposed by [Richter et al.](https://arxiv.org/abs/2102.06235), download the dataset in ROSBag format and place under `./data/super`.
 
 # Calibrate online videos
 
