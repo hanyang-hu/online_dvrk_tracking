@@ -43,7 +43,9 @@ Download the pretrained weights from [sam2.1_hiera_s_endo18](https://drive.googl
 
 # Run benchmarking scripts
 
-Download the data from https://drive.google.com/file/d/1PStrCA-Btru2URMU-hTThOaPMVJ679uw/view?usp=drive_link and put it under the `./data` folder.
+### Synthetic and Real-world (SurgPose) Datasets
+
+Download the data from https://drive.google.com/file/d/1PStrCA-Btru2URMU-hTThOaPMVJ679uw/view?usp=drive_link and place it under the `./data` folder.
 
 **Note.** The benchmarking script is not yet ready. To verify that the environment is set up correctly, you can run:
 ```
@@ -52,7 +54,7 @@ bash surgpose_tracking.sh
 
 ### Grasp Dataset (SuPer)
 
-To compare online tool tracking (with joint angle readings) with the particle filters proposed by [Richter et al.](https://arxiv.org/abs/2102.06235), download the dataset in ROSBag format and place under `./data/super`.
+To compare online tool tracking (with joint angle readings) with the particle filters proposed by [Richter et al.](https://arxiv.org/abs/2102.06235), download the [datasets](https://sites.google.com/ucsd.edu/super-framework/home) in ROSBag format and place them under the `./data/super` folder.
 
 # Calibrate online videos
 

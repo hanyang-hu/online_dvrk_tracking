@@ -14,11 +14,11 @@ TRACKING_OPTS="--rotation_parameterization MixAngle \
 --batch_iters 100 \
 --use_bo_initializer \
 --sample_number 2000 \
---online_iters 1 \
+--online_iters 2 \
 --cos_reparams True \
 --use_contour_tip_net True \
 --final_iters 100 \
---use_prev_joint_angles True \
+--use_prev_joint_angles False \
 --data_dir surgpose"
 
 # Loop over bag_id from 0 to 7 as well as from 30 to 33 with both PSM1 and PSM3

@@ -36,14 +36,14 @@ import torch.nn.functional as F
 
 def parseArgs():     
     parser = argparse.ArgumentParser()
-    data_dir = "data/consistency_evaluation/medium/1"
+    data_dir = "data/synthetic/000000/PSM1/0"
     parser.add_argument("--data_dir", type=str, default=data_dir)  # reference mask
     parser.add_argument("--mesh_dir", type=str, default="urdfs/dVRK/meshes")
     parser.add_argument(
-        "--joint_file", type=str, default=os.path.join(data_dir, "joint_0120.npy")
+        "--joint_file", type=str, default=os.path.join(data_dir, "joint_0000.npy")
     )  # joint angles
     parser.add_argument(
-        "--jaw_file", type=str, default=os.path.join(data_dir, "jaw_0120.npy")
+        "--jaw_file", type=str, default=os.path.join(data_dir, "jaw_0000.npy")
     )  # jaw angles
     parser.add_argument("--arm", type=str, default="psm2")
     parser.add_argument("--sample_number", type=int, default=30)
@@ -292,27 +292,73 @@ def main1():
         # origin_proj = torch.stack([x, y], dim=-1)  # shape [B, 2]
         # origin_proj_int = origin_proj.round().to(torch.int32)
 
+        fx, fy = args.fx, args.fy
+        px, py = args.px, args.py
+
+        axis_len = 0.02  # 2cm
+
         print(f"Predicted masks (NvDiffRast): {pred_masks_nv.shape}")
         print(f"Batch Rendering Time (NvDiffRast): {(end_time - start_time) * 1000 :.4f} ms")
 
-        # Convert [B, H, W] to correct format for visualization
-        pred_masks_np = (pred_masks.cpu().numpy() * 255).astype(np.uint8)  # (B, H, W)
-        # Make 3-channel images for visualization
-        pred_masks_np = np.stack([pred_masks_np]*3, axis=-1)  # (B, H, W, 3)
-        # # Convert [B, 3, H, W] to correct format for visualization
-        # pred_masks_nv = (pred_masks_nv.cpu().numpy() * 255).astype(np.uint8)  # (B, 3, H, W)
-        # pred_masks_nv = np.transpose(pred_masks_nv, (0, 2, 3, 1))  # (B, H, W, 3)
-        # Convert [B, H, W] to correct format for visualization
-        pred_masks_nv = (pred_masks_nv.cpu().numpy() * 255).astype(np.uint8)  # (B, H, W)
-        # Make 3-channel images for visualization
+        # Convert PyTorch3D masks
+        pred_masks_np = (pred_masks.cpu().numpy() * 255).astype(np.uint8)
+        pred_masks_np = np.stack([pred_masks_np]*3, axis=-1)
+
+        # Convert NvDiffRast masks
+        pred_masks_nv = (pred_masks_nv.cpu().numpy() * 255).astype(np.uint8)
         pred_masks_nv = np.stack([pred_masks_nv]*3, axis=-1)
+
         for i in range(min(10, args.sample_number)):
-            # Compare the two rendering results by overlaying them
-            overlay_pytorch3d = cv2.addWeighted(
+
+            overlay = cv2.addWeighted(
                 pred_masks_np[i], 0.5, pred_masks_nv[i], 0.5, 0
             )
-            cv2.imshow(f"Overlay PyTorch3D vs NvDiffRast Sample {i}", overlay_pytorch3d)
 
+            # =============================
+            # Get transform
+            # =============================
+            R = R_batched[i].T.cpu().numpy()       # (3,3)
+            T = T_batched[i].cpu().numpy().reshape(3)
+
+            # =============================
+            # Frame in CAMERA coordinates
+            # =============================
+            origin_cam = T
+
+            x_cam = T + R[:, 0] * axis_len
+            y_cam = T + R[:, 1] * axis_len
+            z_cam = T + R[:, 2] * axis_len
+
+            pts_cam = np.stack([origin_cam, x_cam, y_cam, z_cam], axis=0)
+
+            # =============================
+            # If using PyTorch3D renderer
+            # uncomment this if needed
+            # =============================
+            # pts_cam *= -1
+
+            # =============================
+            # Project
+            # =============================
+            X = pts_cam[:, 0]
+            Y = pts_cam[:, 1]
+            Z = pts_cam[:, 2] + 1e-9
+
+            u = fx * (X / Z) + px
+            v = fy * (Y / Z) + py
+
+            pts_2d = np.stack([u, v], axis=-1).astype(int)
+
+            origin_2d = tuple(pts_2d[0])
+            x_2d = tuple(pts_2d[1])
+            y_2d = tuple(pts_2d[2])
+            z_2d = tuple(pts_2d[3])
+
+            cv2.line(overlay, origin_2d, x_2d, (0, 0, 255), 3)   # X
+            cv2.line(overlay, origin_2d, y_2d, (0, 255, 0), 3)   # Y
+            cv2.line(overlay, origin_2d, z_2d, (255, 0, 0), 3)   # Z
+
+            cv2.imshow(f"Sample {i}", overlay)
             cv2.waitKey(0)
             cv2.destroyAllWindows()
 
@@ -495,5 +541,5 @@ def main2():
             cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    # main1()
-    main2()
+    main1()
+    # main2()

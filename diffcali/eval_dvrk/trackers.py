@@ -1278,6 +1278,8 @@ class Tracker:
             #     if torch.norm(flipped_wrist_pitch_yaw - _prev_wrist_pitch_yaw) < torch.norm(_curr_wrist_pitch_yaw - _prev_wrist_pitch_yaw):
             #         joint_angles[:2] = flipped_wrist_pitch_yaw
 
+            # print("Before: ", joint_angles, self._prev_joint_angles)
+
             debug_joint_angles_lst = []
 
             # print(f"Frame {i}: Initial joint angles: {joint_angles}")
@@ -1353,6 +1355,8 @@ class Tracker:
                             0.5 * joint_angles_R * (1 - torch.cos(math.pi * (joint_angles - self.problem.joint_angles_lb) / joint_angles_R))
                 else:
                     joint_angles = torch.clamp(joint_angles, self.problem.joint_angles_lb, self.problem.joint_angles_ub)
+
+                # print("After: ", joint_angles)
 
                 # print(f"Frame {i}: Optimized joint angles (after clamping): {joint_angles}")
                 debug_joint_angles_lst.append(joint_angles.clone())
