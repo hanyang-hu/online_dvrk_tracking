@@ -121,7 +121,7 @@ if __name__ == "__main__":
     parser.add_argument("--overlay_camera_frame", action='store_true', help="Whether to overlay the camera frame axes on the images")
     parser.add_argument("--sample_number", type=int, default=1000, help="Number of particles to use in the particle filter")
     parser.add_argument("--joint_idx", type=int, default=3, help="Index of the joint to visualize the camera frame for (0-based)")
-    parser.add_argument("--frame_skip", type=int, default=1, help="Number of frames to skip between each processing step")
+    parser.add_argument("--frame_skip", type=int, default=20, help="Number of frames to skip between each processing step")
     args = parser.parse_args()
 
     # Load data
@@ -184,7 +184,7 @@ if __name__ == "__main__":
     time_lst = []
     frame_cnt = 0
     
-    frame_buffer = deque(maxlen=50000)
+    frame_buffer = deque(maxlen=5000)
 
     print(f"Loading data from {bagpath} ...")
 
@@ -246,6 +246,11 @@ if __name__ == "__main__":
         else:
             # pf.predictionStep(std=np.array([2.5e-5, 2.5e-5, 2.5e-5, 1e-4, 1e-4, 1e-4]))
             pf.predictionStep(std=np.array([5e-5, 5e-5, 5e-5, 5e-4, 5e-4, 5e-4]))
+
+        if len(detected_keypoints_l) == 0:
+            detected_keypoints_l = np.empty((0, 2))
+        if len(detected_keypoints_r) == 0:
+            detected_keypoints_r = np.empty((0, 2))
 
         pf.updateStep(
             point_detections=(detected_keypoints_l,detected_keypoints_r),
@@ -371,4 +376,3 @@ if __name__ == "__main__":
             break
 
     cv2.destroyAllWindows()
-
