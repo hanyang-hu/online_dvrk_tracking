@@ -78,13 +78,13 @@ DATA_DIR=$1
 run_variant Gradient False 10 $DATA_DIR False False $BAG
 run_variant Gradient True  10 $DATA_DIR False False $BAG
 
-# ---- Sep. (hard separation) ----
-run_variant Gradient False 10 $DATA_DIR True False $BAG
-run_variant Gradient True  10 $DATA_DIR True False $BAG
+# # ---- Sep. (hard separation) ----
+# run_variant Gradient False 10 $DATA_DIR True False $BAG
+# run_variant Gradient True  10 $DATA_DIR True False $BAG
 
-# ---- Sep. (soft separation) ----
-run_variant Gradient False 10 $DATA_DIR True True $BAG
-run_variant Gradient True  10 $DATA_DIR True True $BAG
+# # ---- Sep. (soft separation) ----
+# run_variant Gradient False 10 $DATA_DIR True True $BAG
+# run_variant Gradient True  10 $DATA_DIR True True $BAG
 
 
 # ===============================

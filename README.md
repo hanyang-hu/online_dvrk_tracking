@@ -50,9 +50,9 @@ Download the data from https://drive.google.com/file/d/1EKDdBhwoUJQ-o0qPJaMteezp
 Run the following commands to benchmark on the synthetic and real-world datasets:
 ```
 bash ./single_arm_benchmark.sh
-python single_arm_quantitative_results.py
-
 bash ./dual_arm_benchmark.sh
+
+python single_arm_quantitative_results.py
 python dual_arm_quantitative_results.py
 ```
 

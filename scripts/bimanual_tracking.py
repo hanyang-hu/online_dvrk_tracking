@@ -518,13 +518,13 @@ if __name__ == "__main__":
         app_loss_str = 'w_app_loss' if args.app_weight > 0 else 'wo_app_loss'
         kpts_det_str = "wo_kpts_det"
         option_label = 'sep' if args.separate_loss else 'joint'
-        bd_label = 'bd_cmaes' if args.use_bd_cmaes else 'cmaes'
+        sep_label = 'softsep' if args.soft_separation else 'hardsep'
         if args.use_pts_loss:
             if args.use_contour_tip_net:
                 kpts_det_str = "w_tipnet"
             else:
                 kpts_det_str = "w_opencv"
         filter_str = "no_filter" if not args.use_filter else args.filter_option
-        save_path = f"/BI_MANUAL_{data_label}.{args.searcher}.{args.online_iters}.{joint_str}.{pts_loss_str}.{kpts_det_str}.{app_loss_str}.{filter_str}.{option_label}.{bd_label}.pth"
+        save_path = f"/BI_MANUAL_{data_label}.{args.searcher}.{args.online_iters}.{joint_str}.{pts_loss_str}.{kpts_det_str}.{app_loss_str}.{filter_str}.{option_label}.{sep_label}.pth"
         save_path = "./pose_results" + save_path
         torch.save({'cTr': cTr_seq, 'joint_angles': joint_angles_seq, 'time': time_seq}, save_path)

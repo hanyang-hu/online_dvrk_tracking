@@ -869,9 +869,9 @@ class GradientDescentSearcher(SearchAlgorithm):
         # Back-propagate the loss
         self.optimizer.zero_grad()
 
-        loss = self.problem.compute_loss(self.vars)
-        
-        if loss.shape[0] == 2:
+        loss = self.problem.compute_loss(self.vars).squeeze()  # shape (2,) for bi-manual case, shape (1,) for single-arm case
+
+        if len(loss.shape) > 0 and loss.shape[0] == 2:
             # Bi-manual case, sum the two losses
             loss_sum = loss[0] + loss[1]
 
@@ -1578,17 +1578,17 @@ class BiManualTracker(Tracker):
         if self.separate_loss:
             if self.args.use_bd_cmaes:
                 CMAES_searcher = CMAES_bi_manual_bd_cus
-                print("[Optimizer: Using bi-manual CMA-ES with separate loss and block-diagonal covariance.]")
+                # print("[Optimizer: Using bi-manual CMA-ES with separate loss and block-diagonal covariance.]")
             else:
                 CMAES_searcher = CMAES_bi_manual_cus
-                print("[Optimizer: Using bi-manual CMA-ES with separate loss and FULL covariance.]")
+                # print("[Optimizer: Using bi-manual CMA-ES with separate loss and FULL covariance.]")
         else:
             if self.args.use_bd_cmaes:
                 CMAES_searcher = CMAES_bd_cus
-                print("[Optimizer: Using CMA-ES with block-diagonal covariance.]")
+                # print("[Optimizer: Using CMA-ES with block-diagonal covariance.]")
             else:
                 CMAES_searcher = CMAES_cus
-                print("[Optimizer: Using CMA-ES with FULL covariance.]")
+                # print("[Optimizer: Using CMA-ES with FULL covariance.]")
 
         optimizer_dict = {
             "CMA-ES": CMAES_searcher, # customized CMA-ES implementation
@@ -1829,10 +1829,22 @@ class BiManualTracker(Tracker):
                 sobol=self.sobol,
             )
             sig = inspect.signature(self.optimizer.__init__)
-            accepted = set(sig.parameters.keys())
-            filtered_kwargs = {
-                k: v for k, v in kwargs.items() if k in accepted
-            }
+
+            # check if constructor has **kwargs
+            has_var_kw = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD
+                for p in sig.parameters.values()
+            )
+
+            if has_var_kw:
+                # constructor accepts arbitrary kwargs → pass everything
+                filtered_kwargs = kwargs
+            else:
+                accepted = set(sig.parameters.keys())
+                filtered_kwargs = {
+                    k: v for k, v in kwargs.items()
+                    if k in accepted
+                }
 
             searcher = self.optimizer(**filtered_kwargs)
             logger = BiManualLogger(searcher, interval=1, after_first_step=False) if self.separate_loss else DummyLogger(searcher, interval=1, after_first_step=False)

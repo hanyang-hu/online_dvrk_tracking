@@ -8,6 +8,7 @@ ContourTipNet/Archive/*
 *.gif
 *.png
 *.zip
+*.csv
 
 # python
 __pycache__/
