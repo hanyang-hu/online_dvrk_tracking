@@ -14,37 +14,28 @@ TRACKING_OPTS="--rotation_parameterization MixAngle \
 --batch_iters 100 \
 --use_bo_initializer \
 --sample_number 2000 \
---online_iters 2 \
+--online_iters 3 \
 --cos_reparams True \
 --use_contour_tip_net True \
 --final_iters 100 \
 --use_prev_joint_angles False \
---data_dir surgpose"
+--data_dir surgpose \
+--separate_loss True \
+--soft_separation False
+"
 
 # Loop over bag_id from 0 to 7 as well as from 30 to 33 with both PSM1 and PSM3
 for BAG_ID in {0..7} {30..33}; do
     echo "Processing bag $BAG_ID ..."
     
-    BAG_NAME="$(printf '%06d' $BAG_ID)/PSM3"
-    BAG_ID_str="${BAG_ID}_PSM3"
+    BAG_NAME="$(printf '%06d' $BAG_ID)"
+    BAG_ID_str="${BAG_ID}"
 
     # Run sequential tracking
-    python scripts/sequential_tracking.py $TRACKING_OPTS --difficulty $BAG_NAME
+    python scripts/bimanual_tracking.py $TRACKING_OPTS --difficulty $BAG_NAME
 
     # Generate video for current bag
-    python scripts/video_generator.py --bag_id $BAG_ID_str --iters_per_frame 1 --data_type surgpose
-
-    # Remove tracking folder to save space
-    rm -rf tracking
-
-    BAG_NAME="$(printf '%06d' $BAG_ID)/PSM1"
-    BAG_ID_str="${BAG_ID}_PSM1"
-
-    # Run sequential tracking
-    python scripts/sequential_tracking.py $TRACKING_OPTS --difficulty $BAG_NAME
-
-    # Generate video for current bag
-    python scripts/video_generator.py --bag_id $BAG_ID_str --iters_per_frame 1 --data_type surgpose
+    python scripts/video_generator.py --bag_id $BAG_ID_str --iters_per_frame 3 --data_type surgpose
 
     # Remove tracking folder to save space
     rm -rf tracking

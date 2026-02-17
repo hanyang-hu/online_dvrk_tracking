@@ -348,22 +348,36 @@ class CtRNet(torch.nn.Module):
 
         return pose_matrix.unsqueeze(0)
 
-    def setup_robot_renderer(self, mesh_files):
-        # mesh_files: list of mesh files
-        focal_length = [-self.args.fx, -self.args.fy]
-        principal_point = [self.args.px, self.args.py]
-        image_size = [self.args.height, self.args.width]
+    def setup_robot_renderer(self, mesh_files, downscale_factor=1):
+        if self.args.use_nvdiffrast:
+            # mesh_files: list of mesh files
+            focal_length = [-self.args.fx, -self.args.fy]
+            principal_point = [self.args.px, self.args.py]
+            image_size = [self.args.height, self.args.width]
 
-        robot_renderer = RobotMeshRenderer(
-            focal_length=focal_length,
-            principal_point=principal_point,
-            image_size=image_size,
-            robot=None,
-            mesh_files=mesh_files,
-            device=self.device,
-            visibility_flags=self.visibility_flags,
-        )  # TODO: test
-
+            robot_renderer = RobotMeshRenderer(
+                focal_length=focal_length,
+                principal_point=principal_point,
+                image_size=image_size,
+                robot=None,
+                mesh_files=mesh_files,
+                device=self.device,
+                visibility_flags=self.visibility_flags,
+            )  # TODO: test
+        else:
+            focal_length = [-self.args.fx / downscale_factor, -self.args.fy / downscale_factor]
+            principal_point = [self.args.px / downscale_factor, self.args.py / downscale_factor]
+            image_size = [self.args.height // downscale_factor, self.args.width // downscale_factor]
+            robot_renderer = RobotMeshRenderer(
+                focal_length=focal_length,
+                principal_point=principal_point,
+                image_size=image_size,
+                robot=None,
+                mesh_files=mesh_files,
+                device=self.device,
+                visibility_flags=self.visibility_flags,
+            )
+            
         return robot_renderer
 
     def render_single_robot_mask(self, cTr, robot_mesh, robot_renderer, resolution=None):

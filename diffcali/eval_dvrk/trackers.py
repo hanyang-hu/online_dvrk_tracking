@@ -220,6 +220,7 @@ class PoseEstimationProblem(Problem):
             self.render_resolution = (self.resolution[0] // args.downscale_factor, self.resolution[1] // args.downscale_factor)
 
         else:
+            self.resolution = self.model.resolution
             self.render_resolution = self.model.resolution
 
         self.joint_angles_lb = joint_angles_lb.to(self.model.device)
@@ -327,10 +328,28 @@ class PoseEstimationProblem(Problem):
             B, self.ref_mask.shape[0], self.ref_mask.shape[1]
         )
 
-        verts, faces, R_list, t_list = self.robot_renderer.batch_get_robot_verts_and_faces(joint_angles, ret_lndFK=True)
-        pred_masks_b = self.model.render_robot_mask_batch_nvdiffrast_rotmat(
-            R_batched, T_batched, verts, faces, self.robot_renderer, self.render_resolution
-        ) # shape (B,H,W)
+        if self.model.args.use_nvdiffrast:
+            verts, faces, R_list, t_list = self.robot_renderer.batch_get_robot_verts_and_faces(joint_angles, ret_lndFK=True)
+            pred_masks_b = self.model.render_robot_mask_batch_nvdiffrast_rotmat(
+                R_batched, T_batched, verts, faces, self.robot_renderer, self.render_resolution
+            ) # shape (B,H,W)
+        else:
+            # Use PyTorch3D renderer
+            assert B == 1, "PyTorch3D renderer is only supported for Gradient searcher currently."
+            # print("Using PyTorch3D renderer, which is much slower than NvDiffRast. Consider enabling --use_nvdiffrast for faster rendering during optimization.")
+
+            R_list, t_list = batch_lndFK(joint_angles)  # shape (B, 2, 3, 3) and (B, 2, 3)
+
+            self.model.get_joint_angles(joint_angles.squeeze(0)) 
+            robot_mesh = self.robot_renderer.get_robot_mesh(joint_angles.squeeze(0))
+
+            if self.args.use_mix_angle:
+                # convert back to axis-angle for rendering
+                cTr_batch = torch.cat([mix_angle_to_axis_angle(cTr_batch[:, :3]), cTr_batch[:, 3:]], dim=1)
+
+            pred_masks_b = self.model.render_robot_mask_batch(
+                cTr_batch, robot_mesh, self.robot_renderer
+            ) # shape is [B, H, W]
 
         # if self.args.downscale_factor != 1:
         #     pred_masks_b = F.interpolate(pred_masks_b.unsqueeze(1), size=self.resolution, mode='bilinear').squeeze(1)
@@ -850,7 +869,7 @@ class GradientDescentSearcher(SearchAlgorithm):
         # Back-propagate the loss
         self.optimizer.zero_grad()
 
-        loss = self.problem.compute_loss(self.vars).squeeze()
+        loss = self.problem.compute_loss(self.vars)
         
         if loss.shape[0] == 2:
             # Bi-manual case, sum the two losses
@@ -871,7 +890,7 @@ class GradientDescentSearcher(SearchAlgorithm):
             self._pop_best = self.batch[0]
         
         else:
-            loss.backward()
+            loss.squeeze().backward()
             # Update dummy data
             self.batch.set_values(self.vars.detach().clone())
             self.batch.set_evals(loss.unsqueeze(0).detach().clone())
@@ -907,7 +926,7 @@ class Tracker:
             stdev_init = stdev_init[:9]  # Use 9 dimensions if symmetric jaws
         self.stdev_init = stdev_init  # Initial standard deviation for the optimization
 
-        if self.model.args.use_nvdiffrast is not True:
+        if self.model.args.use_nvdiffrast is not True and args.searcher in ["CMA-ES", "XNES"]:
             print("[Warning] NvDiffRast renderer is not enabled. Automatically enabling it for better performance.]")
             self.model.args.use_nvdiffrast = True
 

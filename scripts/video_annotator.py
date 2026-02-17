@@ -155,6 +155,8 @@ python scripts/video_annotator.py --idx 000030 --machine_label PSM1 --annotate_s
 python scripts/video_annotator.py --idx 000031 --machine_label PSM1 --annotate_sequence
 python scripts/video_annotator.py --idx 000032 --machine_label PSM1 --annotate_sequence
 python scripts/video_annotator.py --idx 000033 --machine_label PSM1 --annotate_sequence
+
+python scripts/video_annotator.py --idx grasp1 --machine_label PSM1 --annotate_sequence
 """
 
 
@@ -170,7 +172,7 @@ if __name__ == "__main__":
     parser.add_argument("--model_cfg", type=str,
                         default="./configs/sam2.1/sam2.1_hiera_s.yaml")
     parser.add_argument("--downsample_factor", type=int, default=2, help="Downsample factor for tracker input.")
-    parser.add_argument("--num_frames", type=int, default=1000, help="Number of frames to track (default: all frames)")
+    parser.add_argument("--num_frames", type=int, default=-1, help="Number of frames to track (default: all frames)")
     parser.add_argument("--annotate_sequence", action="store_true", help="Whether to annotate the entire sequence (default: only first frame)")
     parser.add_argument("--cam_side", type=str, default="left", choices=["left", "right"], help="Camera side to annotate (default: left)")
     args = parser.parse_args()
@@ -306,28 +308,40 @@ if __name__ == "__main__":
     }
     keypoints_source_path = os.path.join(args.data_path, args.idx, f"keypoints_{cam_side}.yaml")
 
-    with open(gripper_source_path, "r") as f:
-        gripper_data = yaml.safe_load(f)[args.idx][args.machine_label]
+    try:
+        with open(gripper_source_path, "r") as f:
+            gripper_data = yaml.safe_load(f)[args.idx][args.machine_label]
+    except Exception as e:
+        print(f"[WARNING] Failed to load gripper angles: {e}")
+        gripper_data = None
 
-    with open(joint_source_path, "r") as f:
-        joint_angle_data_yaml = yaml.safe_load(f)
-        joint_angle_data = [
-            joint_angle_data_yaml[str(i)][args.machine_label] for i in range(len(joint_angle_data_yaml))
-        ]
+    try:
+        with open(joint_source_path, "r") as f:
+            joint_angle_data_yaml = yaml.safe_load(f)
+            joint_angle_data = [
+                joint_angle_data_yaml[str(i)][args.machine_label] for i in range(len(joint_angle_data_yaml))
+            ]
+    except Exception as e:
+        print(f"[WARNING] Failed to load joint angles: {e}")
+        joint_angle_data = None
 
-    with open(keypoints_source_path, "r") as f:
-        keypoints_data_yaml = yaml.safe_load(f)
-        # Extract the relevant keypoints for the current machine, if not both are available, use None
-        keypoints_data = []
-        for i in range(len(keypoints_data_yaml)):
-            kpts_i = keypoints_data_yaml[i]
-            # if all(k in kpts_i for k in kpts_idx_dict[args.machine_label]):
-            if kpts_idx_dict[args.machine_label][0] in kpts_i and kpts_idx_dict[args.machine_label][1] in kpts_i and kpts_i[kpts_idx_dict[args.machine_label][0]] is not None and kpts_i[kpts_idx_dict[args.machine_label][1]] is not None:
-                # print(kpts_idx_dict[args.machine_label])
-                kpts_i_selected = [[kpts_i[k][0] // args.downsample_factor, kpts_i[k][1] // args.downsample_factor] for k in kpts_idx_dict[args.machine_label]]
-                keypoints_data.append(kpts_i_selected)
-            else:
-                keypoints_data.append(None)
+    try:
+        with open(keypoints_source_path, "r") as f:
+            keypoints_data_yaml = yaml.safe_load(f)
+            # Extract the relevant keypoints for the current machine, if not both are available, use None
+            keypoints_data = []
+            for i in range(len(keypoints_data_yaml)):
+                kpts_i = keypoints_data_yaml[i]
+                # if all(k in kpts_i for k in kpts_idx_dict[args.machine_label]):
+                if kpts_idx_dict[args.machine_label][0] in kpts_i and kpts_idx_dict[args.machine_label][1] in kpts_i and kpts_i[kpts_idx_dict[args.machine_label][0]] is not None and kpts_i[kpts_idx_dict[args.machine_label][1]] is not None:
+                    # print(kpts_idx_dict[args.machine_label])
+                    kpts_i_selected = [[kpts_i[k][0] // args.downsample_factor, kpts_i[k][1] // args.downsample_factor] for k in kpts_idx_dict[args.machine_label]]
+                    keypoints_data.append(kpts_i_selected)
+                else:
+                    keypoints_data.append(None)
+    except Exception as e:
+        print(f"[WARNING] Failed to load keypoints: {e}")
+        keypoints_data = None
 
     print("[INFO] Starting SAM2 tracking on full video...")
 

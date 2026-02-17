@@ -92,7 +92,7 @@ def parseArgs():
     # parser.add_argument('--use_filter', type=str2bool, default=True) # whether to use one euro filter for pose smoothing
     
     parser.add_argument('--filter_option', type=str, default="Kalman", choices=["None", "OneEuro", "OneEuro_orig", "Kalman"]) # which variables to filter
-    parser.add_argument('--cos_reparams', type=str2bool, default=False) # whether to use cosine reparameterization for joint angles in the filter
+    parser.add_argument('--cos_reparams', type=str2bool, default=True) # whether to use cosine reparameterization for joint angles in the filter
 
     parser.add_argument('--separate_loss', type=str2bool, default=True) # whether to compute separate loss for two arms
     parser.add_argument('--soft_separation', type=str2bool, default=False) # whether to use soft separation for two arms
@@ -133,6 +133,9 @@ def parseArgs():
         args.stdev_init[6:] /= 10. # if using joint angle readings, set the stdev for joint angles to a smaller valu
 
     args.stdev_init = torch.cat([args.stdev_init, args.stdev_init], dim=0)  # for two arms
+    
+    if args.searcher == "Gradient" and args.cos_reparams:
+        raise ValueError("Cosine reparameterization is not compatible with gradient-based optimization, please set --cos_reparams False")
 
     return args
 
@@ -333,6 +336,8 @@ if __name__ == "__main__":
     args = parseArgs()
     ctrnet_args = parseCtRNetArgs()
 
+    assert args.use_nvdiffrast, "NvDiffRast is required for bimanual tracking to achieve real-time performance, please enable --use_nvdiffrast flag."
+
     cache_left = f"./data/cached_initialization/{args.data_dir}_{args.difficulty}_PSM3_{args.frame_start}.pth"
     cache_right = f"./data/cached_initialization/{args.data_dir}_{args.difficulty}_PSM1_{args.frame_start}.pth"
     args.data_dir = os.path.join("./data", args.data_dir)
@@ -413,10 +418,11 @@ if __name__ == "__main__":
         dtype=joint_angles_left.dtype,
     )
 
-    if args.use_contour_tip_net:
-        tip_length = 0.0096 # instead of 0.009
-    else:
-        tip_length = 0.009
+    # if args.use_contour_tip_net:
+    #     tip_length = 0.0096 # instead of 0.009
+    # else:
+    #     tip_length = 0.009
+    tip_length = 0.0096
     p_local1 = (
         torch.tensor([0.0, 0.0004, tip_length]) 
         .to(joint_angles_left.dtype)

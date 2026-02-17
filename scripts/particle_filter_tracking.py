@@ -225,6 +225,7 @@ if __name__ == "__main__":
                     latest_mask.copy() if latest_mask is not None else None
                 ))
 
+    # Instead of saving in memory, you should save it in a video and read it from the video
     print(f"Finished loading data. Starting tracking with {len(frame_buffer)} frames in buffer...")
 
     for latest_left, latest_right, latest_joint, latest_mask in frame_buffer:

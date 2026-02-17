@@ -3,19 +3,19 @@ find . -type f -name '*:Zone.Identifier' -delete
 
 # Base options for sequential_tracking.py
 TRACKING_OPTS="--rotation_parameterization MixAngle \
---searcher CMA-ES \
+--searcher Gradient \
 --tracking_visualization \
 --downscale_factor 2 \
+--use_nvdiffrast \
 --use_low_res_mesh True \
 --use_pts_loss True \
 --filter_option Kalman \
---use_nvdiffrast \
 --batch_size 50 \
 --batch_iters 100 \
 --use_bo_initializer \
 --sample_number 2000 \
---online_iters 2 \
---cos_reparams True \
+--online_iters 10 \
+--cos_reparams False \
 --final_iters 100 \
 --use_prev_joint_angles False \
 --data_dir synthetic"

@@ -45,16 +45,20 @@ Download the pretrained weights from [sam2.1_hiera_s_endo18](https://drive.googl
 
 ### Synthetic and Real-world (SurgPose) Datasets
 
-Download the data from https://drive.google.com/file/d/1PStrCA-Btru2URMU-hTThOaPMVJ679uw/view?usp=drive_link and place it under the `./data` folder.
+Download the data from https://drive.google.com/file/d/1EKDdBhwoUJQ-o0qPJaMteezpD79vwvtJ/view?usp=sharing and place it under the `./data` folder.
 
-**Note.** The benchmarking script is not yet ready. To verify that the environment is set up correctly, you can run:
+Run the following commands to benchmark on the synthetic and real-world datasets:
 ```
-bash surgpose_tracking.sh
+bash ./single_arm_benchmark.sh
+python single_arm_quantitative_results.py
+
+bash ./dual_arm_benchmark.sh
+python dual_arm_quantitative_results.py
 ```
 
 ### Grasp Dataset (SuPer)
 
-To compare online tool tracking (with joint angle readings) with the particle filters proposed by [Richter et al.](https://arxiv.org/abs/2102.06235), download the [datasets](https://sites.google.com/ucsd.edu/super-framework/home) in ROSBag format and place them under the `./data/super` folder.
+TBD
 
 # Calibrate online videos
 
@@ -95,12 +99,12 @@ python scripts/video_annotator.py \
 
 ---
 
-## Step 3: Run online tracking
+## Step 3: Run video calibration
 
-After annotation, start online tracking:
+After annotation, start video calibration:
 
 ```bash
-python scripts/online_tracking.py \
+python scripts/video_calibration.py \
     --sample_number 1500 \
     --use_nvdiffrast \
     --use_bo_initializer \

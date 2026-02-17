@@ -122,6 +122,9 @@ def parseArgs():
     if not args.use_prev_joint_angles:
         args.stdev_init[6:] /= 10. # if using joint angle readings, set the stdev for joint angles to a smaller value
 
+    if args.searcher == "Gradient" and args.cos_reparams:
+        raise ValueError("Cosine reparameterization is not compatible with gradient-based optimization, please set --cos_reparams False")
+
     return args
 
 
@@ -437,6 +440,8 @@ if __name__ == "__main__":
     ctrnet_args.use_nvdiffrast = args.use_nvdiffrast
     if ctrnet_args.use_nvdiffrast:
         print("Using NvDiffRast!")
+    elif args.searcher in ["CMA-ES", "XNES"]:
+        raise ValueError(f"{args.searcher} requires NvDiffRast for optimization, please enable --use_nvdiffrast flag.")
 
     # Obtain the data
     data_lst, mesh_files = read_data(args, ctrnet_args)
@@ -447,7 +452,7 @@ if __name__ == "__main__":
 
     # Build the model
     model = CtRNet(ctrnet_args)
-    robot_renderer = model.setup_robot_renderer(mesh_files)
+    robot_renderer = model.setup_robot_renderer(mesh_files, downscale_factor=args.downscale_factor)
     robot_renderer.set_mesh_visibility([True, True, True, True])
 
     # Initialize the model
@@ -458,6 +463,7 @@ if __name__ == "__main__":
             joint_angles = data_lst[0]["optim_joint_angles"].to(model.device)
         else:
             print("[Not using cache or the cache file is not found, running optimization-based initialization...]")
+            assert args.use_nvdiffrast, "Optimization-based initialization requires NvDiffRast for rendering, please enable --use_nvdiffrast flag."
             cTr, joint_angles = initialization(
                 model, data_lst[0], mesh_files
             )  
@@ -499,10 +505,11 @@ if __name__ == "__main__":
         dtype=joint_angles.dtype,
     )
 
-    if args.use_contour_tip_net:
-        tip_length = 0.0096 # instead of 0.009
-    else:
-        tip_length = 0.009
+    # if args.use_contour_tip_net:
+    #     tip_length = 0.0096 # instead of 0.009
+    # else:
+    #     tip_length = 0.009
+    tip_length = 0.0096
     p_local1 = (
         torch.tensor([0.0, 0.0004, tip_length]) 
         .to(joint_angles.dtype)
@@ -591,18 +598,22 @@ if __name__ == "__main__":
             print("Tracking completed.")
 
         # Save the results (label the setup including searcher, number of online iterations, etc.)
+        if not os.path.exists("./pose_results"):
+            os.makedirs("./pose_results")
+
         # save_path = f"./pose_results/{args.difficulty.replace('/', '_')}_tracking_results.pth"
         data_label = f"{'surgpose' if args.data_dir.startswith('./data/surgpose') else 'synthetic'}_{args.difficulty.replace('/', '_')}"
         joint_str = 'wo_joint_angles' if args.use_prev_joint_angles else 'w_joint_angles'
         pts_loss_str = 'w_pts_loss' if args.use_pts_loss else 'wo_pts_loss'
         app_loss_str = 'w_app_loss' if args.app_weight > 0 else 'wo_app_loss'
         kpts_det_str = "wo_kpts_det"
+        renderer_str = "nvdiffrast" if args.use_nvdiffrast else "pytorch3d"
         if args.use_pts_loss:
             if args.use_contour_tip_net:
                 kpts_det_str = "w_tipnet"
             else:
                 kpts_det_str = "w_opencv"
         filter_str = "no_filter" if not args.use_filter else args.filter_option
-        save_path = f"/{data_label}.{args.searcher}.{args.online_iters}.{joint_str}.{pts_loss_str}.{kpts_det_str}.{app_loss_str}.{filter_str}.pth"
+        save_path = f"/{data_label}.{args.searcher}.{args.online_iters}.{joint_str}.{pts_loss_str}.{kpts_det_str}.{app_loss_str}.{filter_str}.{renderer_str}.pth"
         save_path = "./pose_results" + save_path
         torch.save({'cTr': cTr_seq, 'joint_angles': joint_angles_seq, 'time': time_seq}, save_path)

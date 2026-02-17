@@ -65,7 +65,9 @@ def sam2_inference(func):
 
 def parseArgs():
     """
-    python scripts/online_tracking.py --sample_number 1000 --use_nvdiffrast --use_bo_initializer --video_label 000000 --machine_label PSM1
+    python scripts/video_calibration.py --sample_number 2000 --use_nvdiffrast --use_bo_initializer --video_label 000030 --machine_label PSM1 --searcher CMA-ES
+
+    python scripts/video_calibration.py --sample_number 2000 --use_bo_initializer --video_label 000000 --machine_label PSM1 --searcher Gradient --online_iters 10 --cos_reparams False --use_nvdiffrast
     """
     parser = argparse.ArgumentParser()
     parser.add_argument("--mesh_dir", type=str, default="urdfs/dVRK/meshes")
@@ -143,6 +145,9 @@ def parseArgs():
     args.point_prompt_path = f'data/online_videos/{args.video_label}/{args.machine_label}_prompts.txt' # path to the point prompts for the first frame (format: x y label, where label is 1 for foreground and 0 for background)
     args.keypoints_path = f'data/online_videos/{args.video_label}/{args.machine_label}_keypoints.txt' # path to the keypoint prompts for the first frame (format: x y)
     args.joint_init_path = f'data/online_videos/{args.video_label}/{args.machine_label}_joint_init.txt' # Optional: path to the initial joint angles for the first frame (format: 3 visible joints)
+    
+    if args.searcher == "Gradient" and args.cos_reparams:
+        raise ValueError("Cosine reparameterization is not compatible with gradient-based optimization, please set --cos_reparams False")
 
     return args
 
@@ -318,7 +323,7 @@ if __name__ == "__main__":
             f"{args.mesh_dir}/jawright_lowres.ply",
             f"{args.mesh_dir}/jawleft_lowres.ply",
         ]
-    robot_renderer = model.setup_robot_renderer(mesh_files)
+    robot_renderer = model.setup_robot_renderer(mesh_files, downscale_factor=args.downscale_factor)
     robot_renderer.set_mesh_visibility([True, True, True, True])
 
     # Specify camera intrinsics and keypoints
@@ -332,10 +337,11 @@ if __name__ == "__main__":
         dtype=torch.float32,
     )
 
-    if args.use_contour_tip_net:
-        tip_length = 0.0096 # instead of 0.009
-    else:
-        tip_length = 0.009
+    # if args.use_contour_tip_net:
+    #     tip_length = 0.0096 # instead of 0.009
+    # else:
+    #     tip_length = 0.009
+    tip_length = 0.0096 # Set the tip length (distance from the last joint to the tip) to 9.6mm, which is more accurate according to the keypoint prompts
     p_local1 = (
         torch.tensor([0.0, 0.0004, tip_length]) 
         .to(torch.float32)
