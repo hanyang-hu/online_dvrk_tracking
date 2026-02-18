@@ -1273,6 +1273,9 @@ class Tracker:
                         model=self.tip_2d_net,
                         mask=ref_mask,
                     )
+                
+                elif ref_keypoints.shape != (2, 2):
+                    ref_keypoints = None
 
             stdev_init = self.stdev_init.clone()
             # if ref_keypoints is None and self.problem.kpts_loss:
@@ -1477,6 +1480,9 @@ class Tracker:
                         )
                     else:
                         ref_keypoints = ref_keypoints_lst[i][:2] 
+                        if ref_keypoints.shape != (2, 2):
+                            ref_keypoints = None
+
                 det_line_params = det_line_params_lst[i] if det_line_params_lst is not None else None
 
                 overlay = self.visualize(
