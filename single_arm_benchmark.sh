@@ -156,6 +156,7 @@ ONLINE_ES_5=$5
 
 # -------- GD (NvDiffRast) ----------
 run_variant Gradient nvdiffrast False True Learned $ONLINE_GD_10 $DATA_DIR $BAG
+run_variant Gradient nvdiffrast True True Learned $ONLINE_GD_10 $DATA_DIR $BAG
 run_variant Gradient nvdiffrast False True Learned $ONLINE_GD_20 $DATA_DIR $BAG
 
 # -------- GD (PyTorch3D) ----------
