@@ -50,11 +50,12 @@ def parse_single_arm_filename(filename):
     )
 
 
-def collect_results(model, robot_renderer, glctx, args):
+def collect_results(model, robot_renderer, glctx, args, evaluate_surgpose):
 
     surgpose_rows = []
     synthetic_rows = []
 
+    pbar = tqdm.tqdm(os.listdir(POSE_DIR), desc=f"Collecting results from {POSE_DIR}")
     for file in os.listdir(POSE_DIR):
 
         if not file.endswith(".pth"):
@@ -77,7 +78,8 @@ def collect_results(model, robot_renderer, glctx, args):
         # ---------------------------------------------------
         # SURGPOSE
         # ---------------------------------------------------
-        if base == "surgpose":
+        # print(base, evaluate_surgpose)
+        if base == "surgpose" and evaluate_surgpose:
 
             mask_err, kpt_err, avg_time = evaluate_surgpose_trajectory(
                 data_dir,
@@ -132,6 +134,8 @@ def collect_results(model, robot_renderer, glctx, args):
 
             synthetic_rows.append(row)
 
+        pbar.update(1)
+
     # =======================================================
     # Build DataFrames
     # =======================================================
@@ -163,7 +167,8 @@ def collect_results(model, robot_renderer, glctx, args):
         )
 
     # Save raw tables
-    surgpose_df.to_csv("./single_arm_surgpose_raw.csv", index=False)
+    if evaluate_surgpose:
+        surgpose_df.to_csv("./single_arm_surgpose_raw.csv", index=False)
     synthetic_df.to_csv("./single_arm_synthetic_raw.csv", index=False)
 
     # =======================================================
@@ -204,12 +209,13 @@ def collect_results(model, robot_renderer, glctx, args):
             by=["searcher", "online_iters"]
         )
 
-        surgpose_avg.to_csv(
-            # os.path.join(CSV_DIR, "single_arm_surgpose_avg.csv"),
-            "./single_arm_surgpose_avg.csv",
-            index=False
-        )
-        print(f"Saved aggregated SurgPose results to single_arm_surgpose_avg.csv')")
+        if evaluate_surgpose:
+            surgpose_avg.to_csv(
+                # os.path.join(CSV_DIR, "single_arm_surgpose_avg.csv"),
+                "./single_arm_surgpose_avg.csv",
+                index=False
+            )
+            print(f"Saved aggregated SurgPose results to single_arm_surgpose_avg.csv'")
     else:
         surgpose_avg = pd.DataFrame()
 
@@ -594,7 +600,7 @@ def evaluate_synthetic_trajectory(data_dir, cTr_seq, joint_seq, time_seq):
         # Branch B (ambiguous)
         # =======================
         rB = rA.clone()
-        rB[1] = rB[1] + np.pi
+        rB[1] = (rB[1] + np.pi) % (2*np.pi)
 
         jB = jA.clone()
         jB[0] = -jB[0]
@@ -602,10 +608,18 @@ def evaluate_synthetic_trajectory(data_dir, cTr_seq, joint_seq, time_seq):
 
         rot_err_B = rotation_diff(rB, gt_rot[i])
 
-        # ===================================================
-        # Choose branch CONSISTENTLY using rotation error
-        # ===================================================
-        if rot_err_A <= rot_err_B:
+        # # ===================================================
+        # # Choose branch CONSISTENTLY using rotation error
+        # # ===================================================
+        # if rot_err_A <= rot_err_B:
+        #     chosen_rot_err = rot_err_A
+        #     chosen_joint = jA
+        # else:
+        #     chosen_rot_err = rot_err_B
+        #     chosen_joint = jB
+
+        # Choose branch using joint angle error (use L1 norm)
+        if torch.norm(jA[:2] - gt_joint[i][:2], p=1) <= torch.norm(jB[:2] - gt_joint[i][:2], p=1):
             chosen_rot_err = rot_err_A
             chosen_joint = jA
         else:
@@ -641,96 +655,243 @@ def evaluate_synthetic_trajectory(data_dir, cTr_seq, joint_seq, time_seq):
     else:
         avg_time = np.mean(time_seq)
 
+    # if mean_rot_error <= 0.:
+    #     print(f"Mean rotation error is {mean_rot_error:.4f} radians, which is less than 0.5 radians.")
+    # else: 
+    #     print(f"Mean rotation error is {mean_rot_error:.4f} radians, which is greater than 0.5 radians. Consider checking the trajectory plot for potential global phase issues.")
+    #     # Create figure with 10 subplots (5 rows x 2 columns)
+    #     fig, axs = plt.subplots(5, 2, figsize=(10, 10), sharex=True)
+
+    #     # Flatten axes array for easy iteration
+    #     axs = axs.flatten()
+
+    #     dim_name = ["Alpha", "Beta", "Gamma", "X", "Y", "Z", "Wrist Pitch", "Wrist Yaw", "Jaw 1", "Jaw 2"]
+
+    #     pred_cTr_seq = torch.zeros_like(cTr_seq)
+    #     pred_joint_seq = torch.zeros_like(joint_seq)
+    #     for i in range(pred_cTr_seq.shape[0]):
+    #         # =======================
+    #         # Branch A (normal)
+    #         # =======================
+    #         rA = pred_rot[i]
+    #         tA = pred_trans[i]
+    #         jA = joint_seq[i]
+
+    #         # rot_err_A = rotation_diff(rA, gt_rot[i])
+    #         # joint_err_A = joint_diff(jA, ref_joint_seq[i])
+
+    #         # =======================
+    #         # Branch B (ambiguous)
+    #         # =======================
+    #         rB = rA.clone()
+    #         rB[1] = rB[1] + np.pi
+
+    #         jB = jA.clone()
+    #         jB[0] = -jB[0]
+    #         jB[1] = -jB[1]
+
+    #         # rot_err_B = rotation_diff(rB, gt_rot[i])
+
+    #         # ===================================================
+    #         # Choose branch CONSISTENTLY using rotation error
+    #         # ===================================================
+    #         if torch.norm(jA[:2] - gt_joint[i][:2], p=1) <= torch.norm(jB[:2] - gt_joint[i][:2], p=1):
+    #             chosen_rot = rA
+    #             chosen_joint = jA
+    #         else:
+    #             chosen_rot = rB
+    #             chosen_joint = jB
+
+    #         # pred_cTr_seq[i, :3] = axis_angle_to_mix_angle(chosen_rot.unsqueeze(0)).squeeze()
+    #         pred_cTr_seq[i, :3] = chosen_rot
+    #         pred_joint_seq[i] = chosen_joint
+
+    #     # Plot each dimension in its own subplot
+    #     for j in range(3):
+    #         ax = axs[j]
+
+    #         # print(cTr_seq.shape, ref_cTr_seq.shape)
+
+    #         # pred = np.unwrap(cTr_seq[:, j].cpu().numpy(), axis=0)
+    #         pred = pred_cTr_seq[:, j].cpu().numpy()
+    #         pred = np.unwrap(pred, axis=0)
+    #         ref = gt_rot[:, j].cpu().numpy()
+    #         ref  = np.unwrap(ref, axis=0)
+
+    #         # Align global phase
+    #         k = np.round(np.mean((ref - pred) / (2*np.pi)))
+    #         offset = 2 * np.pi * k
+    #         pred_aligned = pred + offset
+
+    #         ax.plot(pred_aligned, label='Predicted', linewidth=1.5)
+    #         ax.plot(ref, label='Reference', linestyle='--', linewidth=1.5)
+
+    #         ax.set_title(dim_name[j])
+    #         ax.grid(True, alpha=0.4)
+
+    #     for j in range(3, 6):
+    #         ax = axs[j]
+
+    #         pred = cTr_seq[:, j].cpu().numpy()
+    #         ref  = ref_cTr_seq[:, j].cpu().numpy()
+
+    #         ax.plot(pred, label='Predicted', linewidth=1.5)
+    #         ax.plot(ref, label='Reference', linestyle='--', linewidth=1.5)
+
+    #         ax.set_title(dim_name[j])
+    #         ax.grid(True, alpha=0.4)
+
+    #     for j in range(6, 9):
+    #         ax = axs[j]
+    #         # ax.plot(joint_seq[:, j-6].cpu().numpy(), label='Predicted', linewidth=1.5)
+    #         ax.plot(pred_joint_seq[:, j-6].cpu().numpy(), label='Predicted', linewidth=1.5)
+    #         ax.plot(gt_joint[:, j-6].cpu().numpy(), label='Reference', linestyle='--', linewidth=1.5)
+    #         ax.set_title(dim_name[j])
+    #         ax.grid(True, alpha=0.4)
+
+    #     # Add common labels
+    #     fig.text(0.04, 0.5, 'cTr Values', va='center', rotation='vertical', fontsize=14)
+
+    #     # Add a single legend below all subplots
+    #     fig.legend(
+    #         ['Predicted', 'Reference'],  # Labels
+    #         loc='lower center',          # Position
+    #         bbox_to_anchor=(0.5, 0.02), # Fine-tune position (x, y)
+    #         ncol=2,                     # Number of columns in legend
+    #         frameon=True,               # Add a frame
+    #         fontsize=12                 # Adjust font size
+    #     )
+
+    #     # Adjust layout
+    #     plt.tight_layout(rect=[0.03, 0.03, 1, 0.98])  # Make space for suptitle and labels
+
+    #     # Save the figure
+    #     if not os.path.exists("./pose_reconstruction"):
+    #         os.makedirs("./pose_reconstruction")
+
+    #     plot_save_path = f"./pose_reconstruction/{data_dir.replace('/', '_')}_tracking_results_{mean_rot_error:.4f}.png"
+    #     fig.savefig(plot_save_path)
+
     return mean_rot_error, mean_trans_error, \
-           mean_joint_theta1_error, mean_joint_theta2_error, mean_joint_theta3_error, \
-            avg_time
-
-    """
-    # Create figure with 10 subplots (5 rows x 2 columns)
-    fig, axs = plt.subplots(5, 2, figsize=(10, 10), sharex=True)
-
-    # Flatten axes array for easy iteration
-    axs = axs.flatten()
-
-    dim_name = ["Alpha", "Beta", "Gamma", "X", "Y", "Z", "Wrist Pitch", "Wrist Yaw", "Jaw 1", "Jaw 2"]
-
-    # Plot each dimension in its own subplot
-    for j in range(6):
-        ax = axs[j]
-
-        # print(cTr_seq.shape, ref_cTr_seq.shape)
-
-        pred = np.unwrap(cTr_seq[:, j].cpu().numpy(), axis=0)
-        ref  = np.unwrap(ref_cTr_seq[:, j].cpu().numpy(), axis=0)
-
-        # Align global phase
-        k = np.round(np.mean((ref - pred) / (2*np.pi)))
-        offset = 2 * np.pi * k
-        pred_aligned = pred + offset
-
-        ax.plot(pred_aligned, label='Predicted', linewidth=1.5)
-        ax.plot(ref, label='Reference', linestyle='--', linewidth=1.5)
-
-        ax.set_title(dim_name[j])
-        ax.grid(True, alpha=0.4)
-
-    for j in range(6, 10):
-        ax = axs[j]
-        ax.plot(joint_seq[:, j-6].cpu().numpy(), label='Predicted', linewidth=1.5)
-        ax.plot(ref_joint_angles[:, j-6].cpu().numpy(), label='Reference', linestyle='--', linewidth=1.5)
-        ax.set_title(dim_name[j])
-        ax.grid(True, alpha=0.4)
-
-    # Add common labels
-    fig.text(0.04, 0.5, 'cTr Values', va='center', rotation='vertical', fontsize=14)
-
-    # Add a single legend below all subplots
-    fig.legend(
-        ['Predicted', 'Reference'],  # Labels
-        loc='lower center',          # Position
-        bbox_to_anchor=(0.5, 0.02), # Fine-tune position (x, y)
-        ncol=2,                     # Number of columns in legend
-        frameon=True,               # Add a frame
-        fontsize=12                 # Adjust font size
-    )
-
-    # Adjust layout
-    plt.tight_layout(rect=[0.03, 0.03, 1, 0.98])  # Make space for suptitle and labels
-
-    # Save the figure
-    if not os.path.exists("./pose_results/pose_reconstruction"):
-        os.makedirs("./pose_results/pose_reconstruction")
-    global cnt
-    plot_save_path = f"./pose_results/pose_reconstruction/{data_dir.replace('/', '_')}_tracking_results_{cnt}.png"
-    fig.savefig(plot_save_path)
-    """
+        mean_joint_theta1_error, mean_joint_theta2_error, mean_joint_theta3_error, \
+        avg_time
 
 
 if __name__ == "__main__":
-    # Load model and setup renderer
-    args = parseArgs()
+    import argparse
 
-    model = CtRNet(args)
-    mesh_files = [
-        f"{args.mesh_dir}/shaft_multi_cylinder.ply",
-        f"{args.mesh_dir}/logo_low_res_1.ply",
-        f"{args.mesh_dir}/jawright_lowres.ply",
-        f"{args.mesh_dir}/jawleft_lowres.ply",
-    ]
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--read_from_csv",  action="store_true")
+    parser.add_argument("--evaluate_surgpose", action="store_true")
+    args_eval = parser.parse_args()
 
-    robot_renderer = model.setup_robot_renderer(mesh_files)
-    robot_renderer.set_mesh_visibility([True, True, True, True])
+    print(args_eval.evaluate_surgpose)
 
-    glctx = dr.RasterizeCudaContext() # CUDA context (OpenGL is not available in my WSL)
-    resolution = (args.height, args.width)
+    if args_eval.read_from_csv:
+        # Load raw CSVs
+        surgpose_df = pd.read_csv("./single_arm_surgpose_raw.csv")
+        synthetic_df = pd.read_csv("./single_arm_synthetic_raw.csv")
 
-    surgpose_df, synthetic_df = collect_results(
-        model,
-        robot_renderer,
-        glctx,
-        args
-    )
+        # -------------------- SINGLE-ARM SURGPOSE --------------------
+        if not surgpose_df.empty:
+            # Normal: 000000 → 000007
+            normal_mask = surgpose_df['data_label'].isin(
+                [f"surgpose_{i:06d}_PSM1" for i in range(0, 8)] + [f"surgpose_{i:06d}_PSM3" for i in range(0, 8)]
+            )
+            # Fast: 000030 → 000033
+            fast_mask = surgpose_df['data_label'].isin(
+                [f"surgpose_{i:06d}_PSM1" for i in range(30, 34)] + [f"surgpose_{i:06d}_PSM3" for i in range(30, 34)]
+            )
 
+            surgpose_normal_df = surgpose_df[normal_mask].copy()
+            surgpose_fast_df   = surgpose_df[fast_mask].copy()
+
+            group_cols = [
+                "searcher",
+                "online_iters",
+                "joint_label",
+                "pts_loss",
+                "kpts_det",
+                "app_loss",
+                "filter",
+                "renderer",
+            ]
+
+            surgpose_normal_avg = surgpose_normal_df.groupby(group_cols, as_index=False).agg({
+                "mask_proj_error": "mean",
+                "keypoint_error": "mean",
+                "avg_runtime": "mean",
+                "avg_runtime_per_iter": "mean",
+            })
+
+            surgpose_fast_avg = surgpose_fast_df.groupby(group_cols, as_index=False).agg({
+                "mask_proj_error": "mean",
+                "keypoint_error": "mean",
+                "avg_runtime": "mean",
+                "avg_runtime_per_iter": "mean",
+            })
+
+            surgpose_normal_avg.to_csv("./single_arm_surgpose_normal_avg.csv", index=False)
+            surgpose_fast_avg.to_csv("./single_arm_surgpose_fast_avg.csv", index=False)
+
+            print("\n====== SINGLE-ARM SURGPOSE NORMAL AVG ======")
+            print(surgpose_normal_avg)
+            print("\n====== SINGLE-ARM SURGPOSE FAST AVG ======")
+            print(surgpose_fast_avg)
+
+        # -------------------- SINGLE-ARM SYNTHETIC --------------------
+        if not synthetic_df.empty:
+            group_cols = [
+                "searcher",
+                "online_iters",
+                "joint_label",
+                "pts_loss",
+                "kpts_det",
+                "app_loss",
+                "filter",
+                "renderer",
+            ]
+
+            synthetic_avg = synthetic_df.groupby(group_cols, as_index=False).agg({
+                "rotation_error": "mean",
+                "translation_error": "mean",
+                "joint_theta1_error": "mean",
+                "joint_theta2_error": "mean",
+                "joint_theta3_error": "mean",
+                "avg_runtime": "mean",
+                "avg_runtime_per_iter": "mean",
+            })
+
+            synthetic_avg.to_csv("./single_arm_synthetic_avg.csv", index=False)
+            print("\n====== SINGLE-ARM SYNTHETIC AVG ======")
+            print(synthetic_avg)
+
+    else:
+        # Original code: re-evaluate .pth files
+        # Load model and setup renderer
+        args = parseArgs()
+
+        model = CtRNet(args)
+        mesh_files = [
+            f"{args.mesh_dir}/shaft_multi_cylinder.ply",
+            f"{args.mesh_dir}/logo_low_res_1.ply",
+            f"{args.mesh_dir}/jawright_lowres.ply",
+            f"{args.mesh_dir}/jawleft_lowres.ply",
+        ]
+
+        robot_renderer = model.setup_robot_renderer(mesh_files)
+        robot_renderer.set_mesh_visibility([True, True, True, True])
+
+        glctx = dr.RasterizeCudaContext() # CUDA context (OpenGL is not available in my WSL)
+        resolution = (args.height, args.width)
+
+        surgpose_df, synthetic_df = collect_results(
+            model,
+            robot_renderer,
+            glctx,
+            args,
+            evaluate_surgpose=args_eval.evaluate_surgpose,
+        )
 
 
 

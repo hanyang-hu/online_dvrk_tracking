@@ -15,6 +15,7 @@ from scripts.single_arm_quantitative_results import (
     evaluate_synthetic_trajectory,
     parseArgs,
 )
+import tqdm
 
 POSE_DIR = "./pose_results"
 
@@ -63,7 +64,8 @@ def evaluate_dual_surgpose(
     model,
     robot_renderer,
     glctx,
-    args
+    args,
+    # evaluate_surgpose
 ):
 
     left_dir  = os.path.join(data_root, "PSM3")
@@ -80,12 +82,14 @@ def evaluate_dual_surgpose(
 
     mask_L, kpt_L, _ = evaluate_surgpose_trajectory(
         left_dir, pred_cTr_L, pred_joint_L,
-        time_seq, model, robot_renderer, glctx, args
+        time_seq, model, robot_renderer, glctx, args,
+        # evaluate_surgpose=evaluate_surgpose,
     )
 
     mask_R, kpt_R, _ = evaluate_surgpose_trajectory(
         right_dir, pred_cTr_R, pred_joint_R,
-        time_seq, model, robot_renderer, glctx, args
+        time_seq, model, robot_renderer, glctx, args,
+        # evaluate_surgpose=evaluate_surgpose,
     )
 
     mask_err = (mask_L + mask_R) / 2.0
@@ -133,11 +137,12 @@ def evaluate_dual_synthetic(data_root, cTr_seq, joint_seq, time_seq):
 # Main collector
 # ==========================================================
 
-def collect_results(model, robot_renderer, glctx, args):
+def collect_results(model, robot_renderer, glctx, args, evaluate_surgpose):
 
     surgpose_rows = []
     synthetic_rows = []
 
+    pbar = tqdm.tqdm(os.listdir(POSE_DIR), desc=f"Collecting results from {POSE_DIR}")
     for file in os.listdir(POSE_DIR):
 
         if not file.endswith(".pth"):
@@ -159,7 +164,7 @@ def collect_results(model, robot_renderer, glctx, args):
         time_seq  = data["time"]
 
         # ================= SURGPOSE =================
-        if base == "surgpose":
+        if base == "surgpose" and evaluate_surgpose:
 
             mask_err, kpt_err, avg_time = evaluate_dual_surgpose(
                 data_root,
@@ -169,7 +174,8 @@ def collect_results(model, robot_renderer, glctx, args):
                 model,
                 robot_renderer,
                 glctx,
-                args
+                args,
+                # evaluate_surgpose=evaluate_surgpose,
             )
 
             surgpose_rows.append({
@@ -205,11 +211,14 @@ def collect_results(model, robot_renderer, glctx, args):
                     if meta["online_iters"] > 0 else None,
             })
 
+        pbar.update(1)
+
     surgpose_df = pd.DataFrame(surgpose_rows)
     synthetic_df = pd.DataFrame(synthetic_rows)
 
     # ================= RAW =================
-    surgpose_df.to_csv("dual_arm_surgpose_raw.csv", index=False)
+    if evaluate_surgpose:
+        surgpose_df.to_csv("dual_arm_surgpose_raw.csv", index=False)
     synthetic_df.to_csv("dual_arm_synthetic_raw.csv", index=False)
 
     # ================= AGGREGATION =================
@@ -237,9 +246,10 @@ def collect_results(model, robot_renderer, glctx, args):
                 "avg_runtime_per_iter": "mean",
             })
         )
-        surgpose_avg.to_csv("dual_arm_surgpose_avg.csv", index=False)
-        print("\n====== DUAL ARM SURGPOSE AVG ======")
-        print(surgpose_avg)
+        if evaluate_surgpose:
+            surgpose_avg.to_csv("dual_arm_surgpose_avg.csv", index=False)
+            print("\n====== DUAL ARM SURGPOSE AVG ======")
+            print(surgpose_avg)
 
     if not synthetic_df.empty:
         synthetic_avg = (
@@ -267,24 +277,112 @@ def collect_results(model, robot_renderer, glctx, args):
 # Entry
 # ==========================================================
 
-if __name__ == "__main__":
+if __name__ == "__main__": 
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--read_from_csv",  action="store_true")
+    parser.add_argument("--evaluate_surgpose", action="store_true")
+    args_eval = parser.parse_args()
 
-    args = parseArgs()
+    if args_eval.read_from_csv:
+        surgpose_df = pd.read_csv("dual_arm_surgpose_raw.csv")
+        synthetic_df = pd.read_csv("dual_arm_synthetic_raw.csv")
+        
+        # Read raw CSVs
+        surgpose_df = pd.read_csv("dual_arm_surgpose_raw.csv")
+        synthetic_df = pd.read_csv("dual_arm_synthetic_raw.csv")
 
-    model = CtRNet(args)
+        # ----------------------
+        # SurgPose aggregation (by data_label)
+        # ----------------------
+        if not surgpose_df.empty:
+            normal_mask = surgpose_df['data_label'].isin(
+                [f"surgpose_{i:06d}" for i in range(0, 8)]
+            )
+            fast_mask = surgpose_df['data_label'].isin(
+                [f"surgpose_{i:06d}" for i in range(30, 34)]
+            )
 
-    mesh_files = [
-        f"{args.mesh_dir}/shaft_multi_cylinder.ply",
-        f"{args.mesh_dir}/logo_low_res_1.ply",
-        f"{args.mesh_dir}/jawright_lowres.ply",
-        f"{args.mesh_dir}/jawleft_lowres.ply",
-    ]
+            normal_df = surgpose_df[normal_mask].copy()
+            fast_df   = surgpose_df[fast_mask].copy()
 
-    robot_renderer = model.setup_robot_renderer(mesh_files)
-    robot_renderer.set_mesh_visibility([True, True, True, True])
+            group_cols = [
+                "searcher",
+                "online_iters",
+                "joint_label",
+                "pts_loss",
+                "kpts_det",
+                "app_loss",
+                "filter",
+                "loss_option",
+                "separation",
+            ]
 
-    glctx = dr.RasterizeCudaContext()
-    resolution = (args.height, args.width)
-    print(f"Initialized rasterizer with resolution {resolution}")
+            surgpose_normal_avg = normal_df.groupby(group_cols, as_index=False).agg({
+                "mask_proj_error": "mean",
+                "keypoint_error": "mean",
+                "avg_runtime": "mean",
+                "avg_runtime_per_iter": "mean",
+            })
+            surgpose_fast_avg = fast_df.groupby(group_cols, as_index=False).agg({
+                "mask_proj_error": "mean",
+                "keypoint_error": "mean",
+                "avg_runtime": "mean",
+                "avg_runtime_per_iter": "mean",
+            })
 
-    collect_results(model, robot_renderer, glctx, args)
+            surgpose_normal_avg.to_csv("dual_arm_surgpose_normal_avg.csv", index=False)
+            surgpose_fast_avg.to_csv("dual_arm_surgpose_fast_avg.csv", index=False)
+
+            print("\n====== DUAL ARM SURGPOSE NORMAL AVG ======")
+            print(surgpose_normal_avg)
+            print("\n====== DUAL ARM SURGPOSE FAST AVG ======")
+            print(surgpose_fast_avg)
+
+        # ----------------------
+        # Synthetic aggregation
+        # ----------------------
+        if not synthetic_df.empty:
+            group_cols = [
+                "searcher",
+                "online_iters",
+                "joint_label",
+                "pts_loss",
+                "kpts_det",
+                "app_loss",
+                "filter",
+                "loss_option",
+                "separation",
+            ]
+            synthetic_avg = synthetic_df.groupby(group_cols, as_index=False).agg({
+                "rotation_error": "mean",
+                "translation_error": "mean",
+                "joint_theta1_error": "mean",
+                "joint_theta2_error": "mean",
+                "joint_theta3_error": "mean",
+                "avg_runtime": "mean",
+                "avg_runtime_per_iter": "mean",
+            })
+            synthetic_avg.to_csv("dual_arm_synthetic_avg.csv", index=False)
+            print("\n====== DUAL ARM SYNTHETIC AVG ======")
+            print(synthetic_avg)
+
+    else:
+        args = parseArgs()
+
+        model = CtRNet(args)
+
+        mesh_files = [
+            f"{args.mesh_dir}/shaft_multi_cylinder.ply",
+            f"{args.mesh_dir}/logo_low_res_1.ply",
+            f"{args.mesh_dir}/jawright_lowres.ply",
+            f"{args.mesh_dir}/jawleft_lowres.ply",
+        ]
+
+        robot_renderer = model.setup_robot_renderer(mesh_files)
+        robot_renderer.set_mesh_visibility([True, True, True, True])
+
+        glctx = dr.RasterizeCudaContext()
+        resolution = (args.height, args.width)
+        print(f"Initialized rasterizer with resolution {resolution}")
+
+        collect_results(model, robot_renderer, glctx, args, evaluate_surgpose=args_eval.evaluate_surgpose)

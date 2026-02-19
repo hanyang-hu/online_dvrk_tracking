@@ -52,8 +52,8 @@ Run the following commands to benchmark on the synthetic and real-world datasets
 bash ./single_arm_benchmark.sh
 bash ./dual_arm_benchmark.sh
 
-python ./scripts/single_arm_quantitative_results.py
-python ./scripts/dual_arm_quantitative_results.py
+python ./scripts/single_arm_quantitative_results.py --evaluate_surgpose
+python ./scripts/dual_arm_quantitative_results.py --evaluate_surgpose
 ```
 
 ### Grasp Dataset (SuPer)

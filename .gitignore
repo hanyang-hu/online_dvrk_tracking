@@ -5,6 +5,7 @@ tracking/*
 ContourTipNet/data/*
 ContourTipNet/GIFs/*
 ContourTipNet/Archive/*
+pose_reconstruction/*
 *.gif
 *.png
 *.zip
