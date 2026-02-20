@@ -56,9 +56,9 @@ python ./scripts/single_arm_quantitative_results.py --evaluate_surgpose
 python ./scripts/dual_arm_quantitative_results.py --evaluate_surgpose
 ```
 
-### Grasp Dataset (SuPer)
+### Our Dataset
 
-TBD
+**Note.** This dataset includes 6 trajectories of LND with painted markers to benchmark our method with the particle filters.
 
 # Calibrate online videos
 
