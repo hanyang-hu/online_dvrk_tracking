@@ -17,11 +17,19 @@ LOCAL_MODULE_DIRS = [
     REPO_ROOT,
     os.path.join(REPO_ROOT, "SurgicalSAM2"),
     os.path.join(REPO_ROOT, "TuRBO"),
+    os.path.join(REPO_ROOT, "ParticleFilter"),
 ]
 
 for p in LOCAL_MODULE_DIRS:
     if p not in sys.path:
         sys.path.insert(0, p)
+
+from core.StereoCamera import StereoCamera
+from core.RobotLink import *
+from core.StereoCamera import *
+from core.ParticleFilter import *
+from core.probability_functions import *
+from core.utils import *
 
 from diffcali.models.CtRNet import CtRNet
 from diffcali.utils.ui_utils import *
@@ -59,16 +67,30 @@ def sam2_inference(func):
     """Run function in torch.inference_mode and bfloat16 autocast (GPU)."""
     def wrapper(*args, **kwargs):
         with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+        # with torch.inference_mode():
             return func(*args, **kwargs)
     return wrapper
 
 """
-python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag1
-python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag2
-python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag3
-python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag4
-python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag5
-python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag6
+
+BETA: better qualitatitve and quantitative results, not included in the paper
+python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag1 --no_cache --use_full_joint_angles
+python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag2 --no_cache --use_full_joint_angles
+python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag3 --no_cache --use_full_joint_angles
+python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag4 --no_cache --use_full_joint_angles
+python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag5 --no_cache --use_full_joint_angles
+python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag6 --no_cache --use_full_joint_angles
+
+
+python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag1 --no_cache
+python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag2 --no_cache
+python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag3 --no_cache 
+python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag4 --no_cache
+python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag5 --no_cache
+python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag6 --no_cache
+
+
+python scripts/custom_quantitative_results.py
 """
 
 def parseArgs():
@@ -77,6 +99,7 @@ def parseArgs():
     parser.add_argument("--batch_opt_lr", type=float, default=3e-3)
     parser.add_argument("--single_opt_lr", type=float, default=5e-4) # if using gradient descent
     parser.add_argument("--batch_size", type=int, default=50)
+    parser.add_argument("--dark_factor", type=float, default=0.7) # factor to darken the input image for better optimization performance (set to 1.0 for no darkening)
     parser.add_argument(
         "--batch_iters", type=int, default=100
     )  # Coarse steps per batch
@@ -92,6 +115,8 @@ def parseArgs():
     parser.add_argument("--online_iters", type=int, default=3)  # Number of iterations for online tracking
     
     parser.add_argument("--no_cache", action="store_true") # Use cached initialization
+
+    parser.add_argument("--use_full_joint_angles", action="store_true") # Whether to use all 7 joint angles for optimization, if false, only use the 3 visible joint angles and duplicate the jaw angle for the two jaws (since we are using symmetric jaw in tracking)
 
     parser.add_argument("--downscale_factor", type=int, default=2)
     parser.add_argument('--use_low_res_mesh', type=str2bool, default=True)
@@ -194,116 +219,132 @@ def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
 
 
-def initialization(model, mask, kpts, joint_angles, mesh_files):
-    """
-    Use the method in origin_retracing.py to initialize the pose and joint angles.
-    """
-    ref_keypoints = torch.from_numpy(kpts).to(model.device).float()  # shape (num_kpts, 2)
-    joint_angles = torch.from_numpy(joint_angles).to(model.device).float() if joint_angles is not None else torch.zeros(4, device=model.device) # shape (4,)
-    joint_angles_read = joint_angles.clone() 
-    model.get_joint_angles(joint_angles)
+# def initialization(model, mask, kpts, joint_angles, mesh_files):
+#     """
+#     Use the method in origin_retracing.py to initialize the pose and joint angles.
+#     """
+#     ref_keypoints = torch.from_numpy(kpts).to(model.device).float()  # shape (num_kpts, 2)
+#     joint_angles = torch.from_numpy(joint_angles).to(model.device).float() if joint_angles is not None else torch.zeros(4, device=model.device) # shape (4,)
+#     joint_angles_read = joint_angles.clone() 
+#     model.get_joint_angles(joint_angles)
 
-    ref_mask_path = f"./data/custom/{args.video_label}/{args.machine_label}_ref_mask.png"
+#     ref_mask_path = f"./data/custom/{args.video_label}/{args.machine_label}_ref_mask.png"
 
-    # # Save the reference mask to the folder of the video
-    # mask_np = (mask.squeeze() > 0).cpu().numpy().astype(np.uint8) * 255
-    # cv2.imwrite(ref_mask_path, mask_np)
+#     # # Save the reference mask to the folder of the video
+#     # mask_np = (mask.squeeze() > 0).cpu().numpy().astype(np.uint8) * 255
+#     # cv2.imwrite(ref_mask_path, mask_np)
 
-    bo_batch_problem = BayesOptBatchProblem(
-        model=model,
-        robot_renderer=robot_renderer,
-        ref_mask_file=ref_mask_path,
-        ref_keypoints=ref_keypoints,
-        fx=ctrnet_args.fx,
-        fy=ctrnet_args.fy,
-        px=ctrnet_args.px,
-        py=ctrnet_args.py,
-        batch_size=args.batch_size,
-        ld1=3,
-        ld2=3,
-        ld3=3,
-        batch_iters=args.batch_iters,
-        lr=args.batch_opt_lr,
-    )
+#     bo_batch_problem = BayesOptBatchProblem(
+#         model=model,
+#         robot_renderer=robot_renderer,
+#         ref_mask_file=ref_mask_path,
+#         ref_keypoints=ref_keypoints,
+#         fx=ctrnet_args.fx,
+#         fy=ctrnet_args.fy,
+#         px=ctrnet_args.px,
+#         py=ctrnet_args.py,
+#         batch_size=args.batch_size,
+#         ld1=3,
+#         ld2=3,
+#         ld3=3,
+#         batch_iters=args.batch_iters,
+#         lr=args.batch_opt_lr,
+#     )
 
-    assert args.sample_number % args.batch_size == 0, "Sample number must be divisible by batch size."
+#     assert args.sample_number % args.batch_size == 0, "Sample number must be divisible by batch size."
 
-    if args.use_bo_initializer:
-        start_time = time.time()
-        print("Using Bayesian optimization for initialization (without joint angle readings)...")
+#     if args.use_bo_initializer:
+#         start_time = time.time()
+#         print("Using Bayesian optimization for initialization (without joint angle readings)...")
 
-        # Optimize over [z, elevation, camera_roll_local, camera_roll, wrist pitch, wrist yaw, jaw1, jaw2]
-        turbo = Turbo1(
-            f=bo_batch_problem,
-            lb=np.array([ 0.10, 90.-60.,   0.,   0.,  -1.5707,     -1.3963, 0.]),
-            ub=np.array([ 0.17, 90.-30., 360., 360.,   0.,          1.3963, 1.5707]),
-            n_init=args.batch_size,
-            max_evals=args.sample_number,
-            batch_size=args.batch_size,
-            max_cholesky_size=1000,
-            n_training_steps=50,
-            verbose=True,
-            min_cuda=1000,
-            device='cuda',
-            batch_eval=True, # Use batch evaluation
-        )
-        turbo.optimize()
+#         # Optimize over [z, elevation, camera_roll_local, camera_roll, wrist pitch, wrist yaw, jaw1, jaw2]
+#         turbo = Turbo1(
+#             f=bo_batch_problem,
+#             lb=np.array([ 0.10, 90.-60.,   0.,   0.,  -1.5707,     -1.3963, 0.]),
+#             ub=np.array([ 0.17, 90.-30., 360., 360.,   0.,          1.3963, 1.5707]),
+#             n_init=args.batch_size,
+#             max_evals=args.sample_number,
+#             batch_size=args.batch_size,
+#             max_cholesky_size=1000,
+#             n_training_steps=50,
+#             verbose=True,
+#             min_cuda=1000,
+#             device='cuda',
+#             batch_eval=True, # Use batch evaluation
+#         )
+#         turbo.optimize()
         
-        end_time = time.time()
-        print(f"Bayesian optimization took {end_time - start_time:.2f} seconds.")
+#         end_time = time.time()
+#         print(f"Bayesian optimization took {end_time - start_time:.2f} seconds.")
 
-    else:
-        lb = np.array([ 0.10, 90.-60.,   0.,   0., -1.5707, -1.3963, 0.])
-        ub = np.array([ 0.17, 90.-30., 360., 360.,  0.,  1.3963, 1.5707 / 2])
+#     else:
+#         lb = np.array([ 0.10, 90.-60.,   0.,   0., -1.5707, -1.3963, 0.])
+#         ub = np.array([ 0.17, 90.-30., 360., 360.,  0.,  1.3963, 1.5707 / 2])
 
-        start_time = time.time()
+#         start_time = time.time()
 
-        if joint_angles is not None and args.use_prev_joint_angles:
-            print("Using random sampling for initialization (with current joint angle readings)...")
+#         if joint_angles is not None and args.use_prev_joint_angles:
+#             print("Using random sampling for initialization (with current joint angle readings)...")
 
-            for i in range(args.sample_number // args.batch_size):
-                random_inputs = np.random.uniform(lb[:4], ub[:4], size=(args.batch_size, 4)).astype(np.float32)
-                random_inputs = np.concatenate([random_inputs, joint_angles_read[:3].unsqueeze(0).expand(args.batch_size, -1).cpu().numpy()], axis=1) # append joint angle readings
-                bo_batch_problem(random_inputs)
+#             for i in range(args.sample_number // args.batch_size):
+#                 random_inputs = np.random.uniform(lb[:4], ub[:4], size=(args.batch_size, 4)).astype(np.float32)
+#                 random_inputs = np.concatenate([random_inputs, joint_angles_read[:3].unsqueeze(0).expand(args.batch_size, -1).cpu().numpy()], axis=1) # append joint angle readings
+#                 bo_batch_problem(random_inputs)
 
-        else:
-            print("Using random sampling for initialization (without joint angle readings)...")
+#         else:
+#             print("Using random sampling for initialization (without joint angle readings)...")
 
-            for i in range(args.sample_number // args.batch_size):
-                random_inputs = np.random.uniform(lb, ub, size=(args.batch_size, 7)).astype(np.float32)
-                bo_batch_problem(random_inputs)
+#             for i in range(args.sample_number // args.batch_size):
+#                 random_inputs = np.random.uniform(lb, ub, size=(args.batch_size, 7)).astype(np.float32)
+#                 bo_batch_problem(random_inputs)
 
-        end_time = time.time()
-        print(f"Random sampling took {end_time - start_time:.2f} seconds.")
+#         end_time = time.time()
+#         print(f"Random sampling took {end_time - start_time:.2f} seconds.")
 
-    # Get the best cTr and joint angles from the optimization
-    optimized_cTr_batch = bo_batch_problem.final_cTr_batch  # shape (N, 6)
-    optimized_joint_angles_batch = bo_batch_problem.joint_angles_batch  # shape (N, num_joints)
-    optimized_loss_batch = bo_batch_problem.final_loss_batch  # shape (N,)
-    valid_mask = th.isfinite(optimized_loss_batch).to(device=optimized_loss_batch.device)
-    if th.any(valid_mask):
-        valid_losses = optimized_loss_batch[valid_mask]
-        valid_cTrs = optimized_cTr_batch[valid_mask]
-        valid_joint_angles = optimized_joint_angles_batch[valid_mask]
-        best_idx = th.argmin(valid_losses)
-        best_cTr = valid_cTrs[best_idx]
-        joint_angles = valid_joint_angles[best_idx]
-        best_loss = valid_losses[best_idx]
-        print("==== Initialization results ====")
-        print(f"  Best cTr = {best_cTr}")
-        print(f"  Best joint angles = {joint_angles}")
-        print(f"  Best loss (with inflated render loss) = {best_loss}")
-    else:
-        raise ValueError("No valid optimization results from initialization!")
+#     # Get the best cTr and joint angles from the optimization
+#     optimized_cTr_batch = bo_batch_problem.final_cTr_batch  # shape (N, 6)
+#     optimized_joint_angles_batch = bo_batch_problem.joint_angles_batch  # shape (N, num_joints)
+#     optimized_loss_batch = bo_batch_problem.final_loss_batch  # shape (N,)
+#     valid_mask = th.isfinite(optimized_loss_batch).to(device=optimized_loss_batch.device)
+#     if th.any(valid_mask):
+#         valid_losses = optimized_loss_batch[valid_mask]
+#         valid_cTrs = optimized_cTr_batch[valid_mask]
+#         valid_joint_angles = optimized_joint_angles_batch[valid_mask]
+#         best_idx = th.argmin(valid_losses)
+#         best_cTr = valid_cTrs[best_idx]
+#         joint_angles = valid_joint_angles[best_idx]
+#         best_loss = valid_losses[best_idx]
+#         print("==== Initialization results ====")
+#         print(f"  Best cTr = {best_cTr}")
+#         print(f"  Best joint angles = {joint_angles}")
+#         print(f"  Best loss (with inflated render loss) = {best_loss}")
+#     else:
+#         raise ValueError("No valid optimization results from initialization!")
 
-    final_cTr_s = best_cTr
+#     final_cTr_s = best_cTr
 
-    # Clear CUDA cache
-    gc.collect()
-    torch.cuda.empty_cache()
+#     # Clear CUDA cache
+#     gc.collect()
+#     torch.cuda.empty_cache()
 
-    return final_cTr_s, joint_angles
+#     return final_cTr_s, joint_angles
 
+
+def initialization(cam_T_b, joint_angles, psm_arm):
+    psm_arm.updateJointAngles(joint_angles)
+
+    T_4 = np.dot(cam_T_b, psm_arm.baseToJointT[3]) # Get pose matrix of frame 4
+    R, t_vec = T_4[:3, :3], T_4[:3, 3]
+    R_ = torch.from_numpy(R).float().cuda()
+    T_ = torch.from_numpy(t_vec).float().cuda()
+    axis_angle = kornia.geometry.conversions.rotation_matrix_to_axis_angle(R_.unsqueeze(0)).squeeze(0) # Convert rotation matrix to axis-angle representation
+    pose_vec = torch.cat([axis_angle, T_], dim=0)
+
+    visible_joint_angles = torch.from_numpy(joint_angles).float().cuda()[-3:]
+    visible_joint_angles[-1] /= 2.0
+    visible_joint_angles = torch.cat([visible_joint_angles, visible_joint_angles[-1].unsqueeze(0)], dim=0) # Duplicate the jaw angle for the two jaws, since we are using symmetric jaw in tracking
+
+    return pose_vec, visible_joint_angles
 
 if __name__ == "__main__":
     args = parseArgs()
@@ -402,11 +443,20 @@ if __name__ == "__main__":
     joint_angles_tensor = torch.from_numpy(joint_angles_np).float().to(model.device)[:,-3:]
     joint_angles_tensor[:, -1] /= 2.0 # Scale down the jaw angles to match the smaller jaw opening in our data
     joint_angles_tensor = torch.cat([joint_angles_tensor, joint_angles_tensor[:, -1].unsqueeze(1)], dim=1) # Duplicate the jaw angle for the two jaws, since we are using symmetric jaw in tracking
+    full_joint_angles_init = joint_angles_np[0] # Get the initial joint angles for the first frame (shape (7,))
 
     # print(joint_angles_tensor.shape)
     print(f"Loaded {len(joint_angles_lst)} joint angle readings from {joint_angles_path}.")
     print(f"Video has {int(cap.get(cv2.CAP_PROP_FRAME_COUNT))} frames.")
     assert len(joint_angles_lst) <= int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), "The number of joint angle readings exceeds the number of frames in the video, please check the joint angle yaml file and the video."
+
+    f = open(os.path.join("./data/custom/", 'handeye.yaml'), 'r')
+    hand_eye_data = yaml.load(f, Loader=yaml.FullLoader)
+
+    cam_T_b = np.eye(4)
+    cam_T_b[:-1, -1] = np.array(hand_eye_data['PSM1_tvec'])/1000.0
+    cam_T_b[:-1, :-1] = axisAngleToRotationMatrix(hand_eye_data['PSM1_rvec'])
+    psm_arm = RobotLink(os.path.join("./data/custom/", "LND.json"))
 
     init_done = False
     seg_time_lst = []
@@ -422,6 +472,9 @@ if __name__ == "__main__":
 
         frame_shape_orig = (frame.shape[1], frame.shape[0]) # (width, height)
         frame = cv2.resize(frame, (ctrnet_args.width, ctrnet_args.height))
+
+        # Make the frame darker to improve SAM segmentation results (since the original video is quite bright and has low contrast)
+        frame = (frame * args.dark_factor).astype(np.uint8)
 
         if not init_done:
             predictor.load_first_frame(frame)
@@ -444,8 +497,14 @@ if __name__ == "__main__":
                 assert kpts is not None, "Keypoint prompts are required for optimization-based initialization. Please provide the keypoints in the specified path."
 
                 cTr, joint_angles = initialization(
-                    model, mask, kpts, None, mesh_files
-                )  
+                    cam_T_b=cam_T_b, # We can set the initial camera-to-base transformation to identity since the optimization will search over the full pose space
+                    joint_angles=joint_angles_np[0], # Use the joint angle readings for initialization (but with a large search range in optimization to account for potential inaccuracies in the readings)
+                    psm_arm=psm_arm
+                )
+
+                # cTr, joint_angles = initialization(
+                #     model, mask, kpts, None, mesh_files
+                # )  
 
                 # After initialization, if using joint angle readings, replace the initial joint angles
                 # If the joint angle reading is flipped, rotate around beta by 180 degrees to resolve ambiguity
@@ -503,6 +562,7 @@ if __name__ == "__main__":
             torch.cuda.synchronize()
             start_time = time.time()
             with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+            # with torch.inference_mode():
                 out_obj_ids, out_mask_logits = get_next_mask(frame)
             torch.cuda.synchronize()
             end_time = time.time()
@@ -512,7 +572,16 @@ if __name__ == "__main__":
 
             torch.cuda.synchronize()
             start_time = time.time()
-            cTr, joint_angles, loss = tracker.track_frame(ref_mask=mask, joint_angles=joint_angles_tensor[frame_idx], is_init=False, keypoints=None)
+
+            if args.use_full_joint_angles:
+                cTr, joint_angles = initialization(
+                    cam_T_b=cam_T_b, 
+                    joint_angles=joint_angles_np[frame_idx],
+                    psm_arm=psm_arm
+                )
+                cTr, joint_angles, loss = tracker.track_frame(ref_mask=mask, joint_angles=joint_angles, is_init=False, keypoints=None, cTr_init=cTr)
+            else:
+                cTr, joint_angles, loss = tracker.track_frame(ref_mask=mask, joint_angles=joint_angles_tensor[frame_idx], is_init=False, keypoints=None)
             torch.cuda.synchronize()
             end_time = time.time()
             track_time_lst.append(end_time - start_time)

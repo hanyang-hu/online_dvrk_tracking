@@ -169,12 +169,12 @@ python scripts/video_annotator.py --idx bag5 --video_path data/custom --video_na
 # python scripts/video_annotator.py --idx bag7 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence
 # python scripts/video_annotator.py --idx bag8 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence
 
-python scripts/video_annotator.py --idx bag1 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence --target_path data/custom/gt_masks/ --vis_interval 1
-python scripts/video_annotator.py --idx bag2 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence --target_path data/custom/gt_masks/ --vis_interval 1
-python scripts/video_annotator.py --idx bag3 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence --target_path data/custom/gt_masks/  --vis_interval 1
-python scripts/video_annotator.py --idx bag4 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence --target_path data/custom/gt_masks/  --vis_interval 1
-python scripts/video_annotator.py --idx bag5 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence --target_path data/custom/gt_masks/  --vis_interval 1
-python scripts/video_annotator.py --idx bag6 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence --target_path data/custom/gt_masks/  --vis_interval 1
+python scripts/video_annotator.py --idx bag1 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence --target_path data/custom/gt_masks/ --vis_interval 1 --dark_factor 0.9
+python scripts/video_annotator.py --idx bag2 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence --target_path data/custom/gt_masks/ --vis_interval 1 --dark_factor 0.9
+python scripts/video_annotator.py --idx bag3 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence --target_path data/custom/gt_masks/  --vis_interval 1 --dark_factor 0.9
+python scripts/video_annotator.py --idx bag4 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence --target_path data/custom/gt_masks/  --vis_interval 1 --dark_factor 0.9
+python scripts/video_annotator.py --idx bag5 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence --target_path data/custom/gt_masks/  --vis_interval 1 --dark_factor 0.9
+python scripts/video_annotator.py --idx bag6 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence --target_path data/custom/gt_masks/  --vis_interval 1 --dark_factor 0.9
 """
 
 
@@ -195,6 +195,7 @@ if __name__ == "__main__":
     parser.add_argument("--annotate_sequence", action="store_true", help="Whether to annotate the entire sequence (default: only first frame)")
     parser.add_argument("--cam_side", type=str, default="left", choices=["left", "right"], help="Camera side to annotate (default: left)")
     parser.add_argument("--vis_interval", type=int, default=10, help="Interval for visualization during tracking (default: every 10 frames)")
+    parser.add_argument("--dark_factor", type=float, default=1.0, help="Factor to darken the video frames for better visualization (default: 1.0, no darkening)")
     args = parser.parse_args()
 
 
@@ -377,6 +378,7 @@ if __name__ == "__main__":
 
             # downsample frame
             frame_ds = cv2.resize(frame_full, (args.width, args.height))
+            frame_ds = (frame_ds * args.dark_factor).astype(np.uint8)
 
             # first frame already initialized
             if frame_idx == 0:

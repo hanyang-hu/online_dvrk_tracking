@@ -1090,7 +1090,7 @@ class Tracker:
             proj_pts=proj_keypoints,
         )
     
-    def track_frame(self, ref_mask, joint_angles, is_init=False, keypoints=None):
+    def track_frame(self, ref_mask, joint_angles, is_init=False, keypoints=None, cTr_init=None):
         if is_init:
             # Initialization settings
             use_dist_loss = self.problem.dist_loss
@@ -1126,7 +1126,7 @@ class Tracker:
         )
 
         # Initialize the solution with the previous cTr and joint angles
-        cTr = self.problem.cTr_init
+        cTr = self.problem.cTr_init if cTr_init is None else cTr_init.clone()
         try: 
             joint_angles = self._prev_joint_angles.clone() if self.args.use_prev_joint_angles else joint_angles.clone()
             # if self.args.use_prev_joint_angles:
