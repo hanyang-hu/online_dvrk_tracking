@@ -157,6 +157,24 @@ python scripts/video_annotator.py --idx 000032 --machine_label PSM1 --annotate_s
 python scripts/video_annotator.py --idx 000033 --machine_label PSM1 --annotate_sequence
 
 python scripts/video_annotator.py --idx grasp1 --machine_label PSM1 --annotate_sequence
+
+
+python scripts/video_annotator.py --idx bag0 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence --target_path data/custom/gt_masks/
+# python scripts/video_annotator.py --idx bag1 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence
+# python scripts/video_annotator.py --idx bag2 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence
+python scripts/video_annotator.py --idx bag3 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence
+# python scripts/video_annotator.py --idx bag4 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence
+python scripts/video_annotator.py --idx bag5 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence
+# python scripts/video_annotator.py --idx bag6 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence
+# python scripts/video_annotator.py --idx bag7 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence
+# python scripts/video_annotator.py --idx bag8 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence
+
+python scripts/video_annotator.py --idx bag1 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence --target_path data/custom/gt_masks/ --vis_interval 1
+python scripts/video_annotator.py --idx bag2 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence --target_path data/custom/gt_masks/ --vis_interval 1
+python scripts/video_annotator.py --idx bag3 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence --target_path data/custom/gt_masks/  --vis_interval 1
+python scripts/video_annotator.py --idx bag4 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence --target_path data/custom/gt_masks/  --vis_interval 1
+python scripts/video_annotator.py --idx bag5 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence --target_path data/custom/gt_masks/  --vis_interval 1
+python scripts/video_annotator.py --idx bag6 --video_path data/custom --video_name left.mp4 --downsample_factor 1 --annotate_sequence --target_path data/custom/gt_masks/  --vis_interval 1
 """
 
 
@@ -165,6 +183,7 @@ if __name__ == "__main__":
     parser.add_argument("--data_path", type=str, default="data/surgpose_raw/")
     parser.add_argument("--target_path", type=str, default="data/surgpose/")
     parser.add_argument("--video_path", type=str, default="data/online_videos/")
+    parser.add_argument("--video_name", type=str, default="video.mp4")
     parser.add_argument("--idx", type=str, default="000000")
     parser.add_argument("--machine_label", type=str, default="PSM3")
     parser.add_argument("--sam2_checkpoint", type=str,
@@ -175,6 +194,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_frames", type=int, default=-1, help="Number of frames to track (default: all frames)")
     parser.add_argument("--annotate_sequence", action="store_true", help="Whether to annotate the entire sequence (default: only first frame)")
     parser.add_argument("--cam_side", type=str, default="left", choices=["left", "right"], help="Camera side to annotate (default: left)")
+    parser.add_argument("--vis_interval", type=int, default=10, help="Interval for visualization during tracking (default: every 10 frames)")
     args = parser.parse_args()
 
 
@@ -186,7 +206,7 @@ if __name__ == "__main__":
     source_video_path = os.path.join(
         args.data_path, args.idx, "regular", f"{cam_side}_video.mp4"
     )
-    target_video_path = os.path.join(target_video_dir, "video.mp4")
+    target_video_path = os.path.join(target_video_dir, args.video_name)
 
     if not os.path.exists(target_video_path):
         os.system(f"cp {source_video_path} {target_video_path}")
@@ -388,7 +408,7 @@ if __name__ == "__main__":
                 keypoints_out_path = os.path.join(frame_dir, f"keypoints_{frame_idx:04d}.npy")
                 np.save(keypoints_out_path, tooltips_ds)
 
-            if frame_idx % 10 == 0:
+            if frame_idx % args.vis_interval == 0:
                 overlay = frame_ds.copy()
                 color = cv2.applyColorMap(mask, cv2.COLORMAP_JET)
                 overlay = cv2.addWeighted(overlay, 0.7, color, 0.3, 0)

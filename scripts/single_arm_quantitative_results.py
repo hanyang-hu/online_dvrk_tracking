@@ -18,7 +18,7 @@ from diffcali.models.CtRNet import CtRNet
 from diffcali.eval_dvrk.LND_fk import lndFK, batch_lndFK
 from diffcali.utils.projection_utils import *
 from diffcali.utils.ui_utils import *
-from diffcali.utils.angle_transform_utils import mix_angle_to_axis_angle, axis_angle_to_mix_angle
+from diffcali.utils.angle_transform_utils import mix_angle_to_axis_angle, axis_angle_to_mix_angle, mix_angle_to_rotmat
 
 POSE_DIR = "./pose_results"
 
@@ -516,10 +516,12 @@ def rotation_diff(mix_angle1, mix_angle2):
     """
     Compute norm of log(R_1^T R2) by kornia
     """
-    axis_angle1 = mix_angle_to_axis_angle(mix_angle1.unsqueeze(0)).squeeze()
-    axis_angle2 = mix_angle_to_axis_angle(mix_angle2.unsqueeze(0)).squeeze()
-    R1 = kornia.geometry.conversions.axis_angle_to_rotation_matrix(axis_angle1.unsqueeze(0)).squeeze()
-    R2 = kornia.geometry.conversions.axis_angle_to_rotation_matrix(axis_angle2.unsqueeze(0)).squeeze()
+    # axis_angle1 = mix_angle_to_axis_angle(mix_angle1.unsqueeze(0)).squeeze()
+    # axis_angle2 = mix_angle_to_axis_angle(mix_angle2.unsqueeze(0)).squeeze()
+    # R1 = kornia.geometry.conversions.axis_angle_to_rotation_matrix(axis_angle1.unsqueeze(0)).squeeze()
+    # R2 = kornia.geometry.conversions.axis_angle_to_rotation_matrix(axis_angle2.unsqueeze(0)).squeeze()
+    R1 = mix_angle_to_rotmat(mix_angle1.unsqueeze(0)).squeeze()
+    R2 = mix_angle_to_rotmat(mix_angle2.unsqueeze(0)).squeeze()
     # print(R1.shape, R2.shape)
     R_diff = torch.matmul(R1.transpose(0, 1), R2)
     log_R_diff = kornia.geometry.conversions.rotation_matrix_to_axis_angle(R_diff.unsqueeze(0)).squeeze()
@@ -531,6 +533,11 @@ def translation_diff(t1, t2):
     Compute L2 distance between t1 and t2
     """
     return torch.norm(t1 - t2, dim=-1)
+
+def angle_diff(a, b):
+    diff = a - b
+    diff = (diff + np.pi) % (2 * np.pi) - np.pi
+    return torch.abs(diff)
 
 @torch.no_grad()
 def evaluate_synthetic_trajectory(data_dir, cTr_seq, joint_seq, time_seq):
@@ -596,11 +603,14 @@ def evaluate_synthetic_trajectory(data_dir, cTr_seq, joint_seq, time_seq):
         rot_err_A = rotation_diff(rA, gt_rot[i])
         # joint_err_A = joint_diff(jA, ref_joint_seq[i])
 
+        # chosen_rot_err = rot_err_A
+        # chosen_joint = jA
+
         # =======================
         # Branch B (ambiguous)
         # =======================
         rB = rA.clone()
-        rB[1] = (rB[1] + np.pi) % (2*np.pi)
+        rB[1] = rB[1] + np.pi
 
         jB = jA.clone()
         jB[0] = -jB[0]
@@ -618,8 +628,16 @@ def evaluate_synthetic_trajectory(data_dir, cTr_seq, joint_seq, time_seq):
         #     chosen_rot_err = rot_err_B
         #     chosen_joint = jB
 
-        # Choose branch using joint angle error (use L1 norm)
-        if torch.norm(jA[:2] - gt_joint[i][:2], p=1) <= torch.norm(jB[:2] - gt_joint[i][:2], p=1):
+        # # Choose branch using joint angle error (use L1 norm)
+        # if torch.norm(jA[:2] - gt_joint[i][:2], p=1) <= torch.norm(jB[:2] - gt_joint[i][:2], p=1):
+        #     chosen_rot_err = rot_err_A
+        #     chosen_joint = jA
+        # else:
+        #     chosen_rot_err = rot_err_B
+        #     chosen_joint = jB
+
+        # Choose branch by checking whether or not need to +/- pi on beta to align with gt_rot
+        if angle_diff(rA[1], gt_rot[i][1]) <= angle_diff(rB[1], gt_rot[i][1]):
             chosen_rot_err = rot_err_A
             chosen_joint = jA
         else:
@@ -695,7 +713,8 @@ def evaluate_synthetic_trajectory(data_dir, cTr_seq, joint_seq, time_seq):
     #         # ===================================================
     #         # Choose branch CONSISTENTLY using rotation error
     #         # ===================================================
-    #         if torch.norm(jA[:2] - gt_joint[i][:2], p=1) <= torch.norm(jB[:2] - gt_joint[i][:2], p=1):
+    #         # if True or torch.norm(jA[:2] - gt_joint[i][:2], p=1) <= torch.norm(jB[:2] - gt_joint[i][:2], p=1):
+    #         if angle_diff(rA[1], gt_rot[i][1]) <= angle_diff(rB[1], gt_rot[i][1]):
     #             chosen_rot = rA
     #             chosen_joint = jA
     #         else:
@@ -718,10 +737,16 @@ def evaluate_synthetic_trajectory(data_dir, cTr_seq, joint_seq, time_seq):
     #         ref = gt_rot[:, j].cpu().numpy()
     #         ref  = np.unwrap(ref, axis=0)
 
-    #         # Align global phase
-    #         k = np.round(np.mean((ref - pred) / (2*np.pi)))
-    #         offset = 2 * np.pi * k
-    #         pred_aligned = pred + offset
+    #         # # Align global phase
+    #         # k = np.round(np.mean((ref - pred) / (2*np.pi)))
+    #         # offset = 2 * np.pi * k
+    #         # pred_aligned = pred + offset
+    #         # Align phase for each time step individually (to handle potential phase jumps)
+    #         pred_aligned = np.zeros_like(pred)
+    #         for t in range(len(pred)):
+    #             k = np.round((ref[t] - pred[t]) / (2*np.pi))
+    #             offset = 2 * np.pi * k
+    #             pred_aligned[t] = pred[t] + offset
 
     #         ax.plot(pred_aligned, label='Predicted', linewidth=1.5)
     #         ax.plot(ref, label='Reference', linestyle='--', linewidth=1.5)

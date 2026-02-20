@@ -64,27 +64,81 @@ def invertTransformMatrix(T):
     out[:-1,  -1] = -np.dot(out[:-1, :-1], T[:-1,  -1])
     return out
 
-def segmentColorAndGetKeyPoints(img, hsv_min=(90, 40, 40), hsv_max=(120, 255, 255), draw_contours=False):
-    hsv = cv2.cvtColor(img,  cv2.COLOR_RGB2HSV)
-    mask  = cv2.inRange(hsv , hsv_min, hsv_max)
-    mask  = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5,5),np.uint8))
+# def segmentColorAndGetKeyPoints(img, hsv_min=(90, 40, 40), hsv_max=(120, 255, 255), draw_contours=False):
+#     hsv = cv2.cvtColor(img,  cv2.COLOR_RGB2HSV)
+#     mask  = cv2.inRange(hsv , hsv_min, hsv_max)
+#     mask  = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5,5),np.uint8))
 
-    cnts = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+#     cnts = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+#     cnts = imutils.grab_contours(cnts)
+
+#     centroids = []
+#     for c in cnts:
+#         # compute the center of the contour
+#         M = cv2.moments(c)
+#         if M["m00"] == 0:
+#             cX = M["m10"]
+#             cY = M["m01"]
+#         else:
+#             cX = M["m10"] / M["m00"]
+#             cY = M["m01"] / M["m00"]
+#         centroids.append(np.array([cX, cY]))
+
+#     if draw_contours:
+#         cv2.drawContours(img, cnts, -1, (255, 0, 0), thickness=3)
+    
+#     return np.array(centroids), img
+
+
+def segmentColorAndGetKeyPoints(
+        img,
+        hsv_min=(40, 80, 80),
+        hsv_max=(80, 255, 255),
+        draw_contours=False):
+
+    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+
+    # Strengthen green separation
+    hsv = hsv.astype(np.float32)
+    hsv[:, :, 1] = np.clip(hsv[:, :, 1] * 1.4, 0, 255)   # boost saturation
+    hsv[:, :, 2] = np.clip(hsv[:, :, 2] * 1.2, 0, 255)   # increase brightness
+    hsv = hsv.astype(np.uint8)
+
+    lower = np.array(hsv_min)
+    upper = np.array(hsv_max)
+
+    mask = cv2.inRange(hsv, lower, upper)
+
+    # Explicitly suppress dark pixels (strong black filtering)
+    value_mask = hsv[:, :, 2] > 100
+    mask = mask & value_mask.astype(np.uint8) * 255
+
+    kernel_close = np.ones((5, 5), np.uint8)
+    kernel_open  = np.ones((3, 3), np.uint8)
+
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_close)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_open)
+
+    cnts = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     cnts = imutils.grab_contours(cnts)
 
     centroids = []
+
     for c in cnts:
-        # compute the center of the contour
+        area = cv2.contourArea(c)
+        if area < 30:
+            continue
+
         M = cv2.moments(c)
         if M["m00"] == 0:
-            cX = M["m10"]
-            cY = M["m01"]
-        else:
-            cX = M["m10"] / M["m00"]
-            cY = M["m01"] / M["m00"]
+            continue
+
+        cX = M["m10"] / M["m00"]
+        cY = M["m01"] / M["m00"]
         centroids.append(np.array([cX, cY]))
 
-    if draw_contours:
-        cv2.drawContours(img, cnts, -1, (255, 0, 0), thickness=3)
-    
+        if draw_contours:
+            cv2.drawContours(img, [c], -1, (255, 0, 0), 2)
+            cv2.circle(img, (int(cX), int(cY)), 4, (0, 255, 0), -1)
+
     return np.array(centroids), img

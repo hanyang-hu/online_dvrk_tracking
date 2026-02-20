@@ -3,7 +3,7 @@ import yaml
 import cv2
 
 class StereoCamera():
-    def __init__(self, cal_file_path, rectify = True, downscale_factor = 2, scale_baseline=1e-3):
+    def __init__(self, cal_file_path, rectify = True, downscale_factor = 1, scale_baseline=1e-3):
         # Load cal file and get all the parameters
         # scale_baseline scales the baseline (i.e. converts units from mm to m!)
         f = open(cal_file_path)
@@ -58,7 +58,7 @@ class StereoCamera():
         
         return left_image, right_image
 
-    def projectPoints(self, points):
+    def projectPoints(self, points, left_only=False):
         # points is Nx3 np array
         points = np.transpose(points)
         projected_point_l = np.transpose(np.dot(self.K1, points/points[-1,:]))[:,:-1]
@@ -68,4 +68,7 @@ class StereoCamera():
         
         projected_point_r = np.transpose(np.dot(self.K2, points_r/points_r[-1,:]))[:,:-1]
         
-        return projected_point_l, projected_point_r
+        if left_only:
+            return (projected_point_l,)
+        else:
+            return projected_point_l, projected_point_r

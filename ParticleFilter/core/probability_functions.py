@@ -34,10 +34,14 @@ def pointFeatureObs(state, point_detections, robot_arm, joint_angle_readings, ca
                                                                                                             len(point_detections)) \
                         + "Note that these lengths represent the number of cameras being used.")
     
+    # print(projected_points, point_detections)
+    
     # Make association between detected and projected & compute probability
     prob = 1
     for c_idx, proj_point in enumerate(projected_points):
-        # Use hungarian algorithm to match projected and detected points
+    # Use hungarian algorithm to match projected and detected points
+    # print(c_idx, proj_point, point_detections)
+    # c_idx, proj_point = 0, projected_points[0]
         C = np.linalg.norm(proj_point[:, None, :] - point_detections[c_idx][None, :,  :], axis=2)
         row_idx, col_idx = optimize.linear_sum_assignment(C)
         
