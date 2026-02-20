@@ -111,41 +111,34 @@ class SkeletonVisualizer:
         base_cam = pose_matrix[:3, 3].cpu().numpy()
         shaft_axis = pose_matrix[:3, :3][:, 2].cpu().numpy()
         shaft_axis = shaft_axis / np.linalg.norm(shaft_axis)
-        p_neg = base_cam - 0.1 * shaft_axis
+        p_neg = base_cam - 0.03 * shaft_axis
 
         pt_base = self._filter_point("base", self.project_cam(base_cam))
         pt_neg  = self._filter_point("p_neg", self.project_cam(p_neg))
 
-        # h, w, _ = blended.shape
+        h, w, _ = blended.shape
+        
+        p0 = np.array(pt_base, dtype=np.float32)
+        p1 = np.array(pt_neg, dtype=np.float32)
 
-        # # convert to float for geometry
-        # p0 = np.array(pt_base, dtype=np.float32)
-        # p1 = np.array(pt_neg,  dtype=np.float32)
+        d = p1 - p0
+        norm = np.linalg.norm(d)
+        if norm > 1e-6:
+            d /= norm
 
-        # # ray direction (base → neg)
-        # d = p0 - p1
-        # norm = np.linalg.norm(d)
-        # if norm > 1e-6:
-        #     d /= norm
+            far_pt = p0 + d * max(w, h) * 2
 
-        #     # extend far beyond image
-        #     far_pt = p0 + d * max(w, h) * 2
+            ok, _, border_pt = cv2.clipLine(
+                (0, 0, w, h),
+                tuple(p0.astype(int)),
+                tuple(far_pt.astype(int))
+            )
 
-        #     ok, _, border_pt = cv2.clipLine(
-        #         (0, 0, w, h),
-        #         tuple(p0.astype(int)),
-        #         tuple(far_pt.astype(int))
-        #     )
+            if ok:
+                pt_neg_far = border_pt
+                cv2.line(blended, pt_base, pt_neg_far, (255, 255, 0), self.thickness)
 
-        #     if ok:
-        #         cv2.line(
-        #             blended,
-        #             tuple(p0.astype(int)),
-        #             border_pt,
-        #             (255, 255, 0),
-        #             self.thickness
-        #         )
-        cv2.line(blended, pt_neg, pt_base, (255, 255, 0), self.thickness)
+        # cv2.line(blended, pt_neg, pt_base, (255, 255, 0), self.thickness)
 
         # -----------------------------
         # BASE → TIP END
