@@ -1543,15 +1543,16 @@ class BiManualTracker(Tracker):
         self.soft_separation = args.soft_separation
 
         if args.filter_option == "Kalman":
+            ms_factor = 1. if not args.searcher == "Gradient" else 0.01 # reduce measurement noise for gradient-based searcher as it produces less noisy results   
             self.filter_left = self.filter = KalmanFilter(
                 process_noise_pos=np.array([2e-5, 1e-4, 2e-5, 2e-5, 2e-5, 2e-5, 1e-4, 1e-4, 1e-4, 1e-4]),      # scalar or (D,)
                 process_noise_vel=np.array([2e-4, 1e-3, 2e-4, 2e-4, 2e-4, 2e-4, 1e-3, 1e-3, 1e-3, 1e-3]),      # scalar or (D,)
-                measurement_noise=np.array([2e-3, 1e-2, 2e-3, 2e-3, 2e-3, 2e-3, 5e-3, 5e-3, 5e-3, 5e-3]),      # scalar or (D,)
+                measurement_noise=np.array([2e-3, 1e-2, 2e-3, 2e-3, 2e-3, 2e-3, 5e-3, 5e-3, 5e-3, 5e-3]) * ms_factor,      # scalar or (D,)
             )
             self.filter_right = self.filter = KalmanFilter(
                 process_noise_pos=np.array([2e-5, 1e-4, 2e-5, 2e-5, 2e-5, 2e-5, 1e-4, 1e-4, 1e-4, 1e-4]),      # scalar or (D,)
                 process_noise_vel=np.array([2e-4, 1e-3, 2e-4, 2e-4, 2e-4, 2e-4, 1e-3, 1e-3, 1e-3, 1e-3]),      # scalar or (D,)
-                measurement_noise=np.array([2e-3, 1e-2, 2e-3, 2e-3, 2e-3, 2e-3, 5e-3, 5e-3, 5e-3, 5e-3]),      # scalar or (D,)
+                measurement_noise=np.array([2e-3, 1e-2, 2e-3, 2e-3, 2e-3, 2e-3, 5e-3, 5e-3, 5e-3, 5e-3]) * ms_factor,      # scalar or (D,)
             )
         elif args.filter_option == "OneEuro":
             self.filter_left = self.filter = OneEuroFilter(
