@@ -105,6 +105,7 @@ After annotation, start video calibration:
 
 ```bash
 python scripts/video_calibration.py \
+    --rotation_parameterization MixAngle \
     --sample_number 1500 \
     --use_nvdiffrast \
     --use_bo_initializer \
