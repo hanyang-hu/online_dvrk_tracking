@@ -164,7 +164,7 @@ def collect_results(model, robot_renderer, glctx, args, evaluate_surgpose):
         time_seq  = data["time"]
 
         # ================= SURGPOSE =================
-        if base == "surgpose" and evaluate_surgpose:
+        if base == "surgpose" and evaluate_surgpose and seq in ["000030", "000031", "000032", "000033"]:
 
             mask_err, kpt_err, avg_time = evaluate_dual_surgpose(
                 data_root,
@@ -189,7 +189,7 @@ def collect_results(model, robot_renderer, glctx, args, evaluate_surgpose):
             })
 
         # ================= SYNTHETIC =================
-        elif base == "synthetic":
+        elif False and base == "synthetic":
 
             rot_err, trans_err, joint_theta1_err, joint_theta2_err, joint_theta3_err, avg_time = evaluate_dual_synthetic(
                 data_root,
@@ -285,11 +285,11 @@ if __name__ == "__main__":
 
     if args_eval.read_from_csv:
         surgpose_df = pd.read_csv("dual_arm_surgpose_raw.csv")
-        synthetic_df = pd.read_csv("dual_arm_synthetic_raw.csv")
+        # synthetic_df = pd.read_csv("dual_arm_synthetic_raw.csv")
         
         # Read raw CSVs
         surgpose_df = pd.read_csv("dual_arm_surgpose_raw.csv")
-        synthetic_df = pd.read_csv("dual_arm_synthetic_raw.csv")
+        # synthetic_df = pd.read_csv("dual_arm_synthetic_raw.csv")
 
         # ----------------------
         # SurgPose aggregation (by data_label)
@@ -338,33 +338,33 @@ if __name__ == "__main__":
             print("\n====== DUAL ARM SURGPOSE FAST AVG ======")
             print(surgpose_fast_avg)
 
-        # ----------------------
-        # Synthetic aggregation
-        # ----------------------
-        if not synthetic_df.empty:
-            group_cols = [
-                "searcher",
-                "online_iters",
-                "joint_label",
-                "pts_loss",
-                "kpts_det",
-                "app_loss",
-                "filter",
-                "loss_option",
-                "separation",
-            ]
-            synthetic_avg = synthetic_df.groupby(group_cols, as_index=False).agg({
-                "rotation_error": "mean",
-                "translation_error": "mean",
-                "joint_theta1_error": "mean",
-                "joint_theta2_error": "mean",
-                "joint_theta3_error": "mean",
-                "avg_runtime": "mean",
-                "avg_runtime_per_iter": "mean",
-            })
-            synthetic_avg.to_csv("dual_arm_synthetic_avg.csv", index=False)
-            print("\n====== DUAL ARM SYNTHETIC AVG ======")
-            print(synthetic_avg)
+        # # ----------------------
+        # # Synthetic aggregation
+        # # ----------------------
+        # if not synthetic_df.empty:
+        #     group_cols = [
+        #         "searcher",
+        #         "online_iters",
+        #         "joint_label",
+        #         "pts_loss",
+        #         "kpts_det",
+        #         "app_loss",
+        #         "filter",
+        #         "loss_option",
+        #         "separation",
+        #     ]
+        #     synthetic_avg = synthetic_df.groupby(group_cols, as_index=False).agg({
+        #         "rotation_error": "mean",
+        #         "translation_error": "mean",
+        #         "joint_theta1_error": "mean",
+        #         "joint_theta2_error": "mean",
+        #         "joint_theta3_error": "mean",
+        #         "avg_runtime": "mean",
+        #         "avg_runtime_per_iter": "mean",
+        #     })
+        #     synthetic_avg.to_csv("dual_arm_synthetic_avg.csv", index=False)
+        #     print("\n====== DUAL ARM SYNTHETIC AVG ======")
+        #     print(synthetic_avg)
 
     else:
         args = parseArgs()

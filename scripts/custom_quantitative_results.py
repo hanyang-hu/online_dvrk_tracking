@@ -277,6 +277,8 @@ if __name__ == "__main__":
     # Evaluate each trajectory and average across videos for each method
     cma_es_errors = []
     pf_errors = []
+    cma_es_times = []
+    pf_times = []
     for label, results in all_results.items():
         if results["cma_es"] is not None:
             cma_es_error, cma_es_time = evaluate_trajectory(
@@ -284,6 +286,7 @@ if __name__ == "__main__":
                 label, model, robot_renderer, glctx, args
             )
             cma_es_errors.append(cma_es_error)
+            cma_es_times.append(cma_es_time)
             print(f"{label} CMA-ES: Mean Mask Error={cma_es_error:.4f}, Avg Time={cma_es_time:.4f} s")
 
         if results["pf"] is not None:
@@ -292,20 +295,50 @@ if __name__ == "__main__":
                 label, model, robot_renderer, glctx, args
             )
             pf_errors.append(pf_error)
+            pf_times.append(pf_time)
             print(f"{label} Particle Filter: Mean Mask Error={pf_error:.4f}, Avg Time={pf_time:.4f} s")
 
+    # print("\nOverall Results:")
+    # if cma_es_errors:
+    #     print(f"CMA-ES Average Mean Mask Error: {np.mean(cma_es_errors):.4f}")
+    #     print(f"CMA-ES Average FPS (excluding initialization): {1.0 / np.mean([t for t in all_results[label]['cma_es']['time'][10:]]):.2f} FPS")
+    # else:
+    #     print("No CMA-ES results to average.")
+
+    # if pf_errors:
+    #     print(f"Particle Filter Average Mean Mask Error: {np.mean(pf_errors):.4f}")
+    #     print(f"Particle Filter Average FPS (excluding initialization): {1.0 / np.mean([t for t in all_results[label]['pf']['time'][10:]]):.2f} FPS")
+    # else:
+    #     print("No Particle Filter results to average.")
+    
     print("\nOverall Results:")
     if cma_es_errors:
-        print(f"CMA-ES Average Mean Mask Error: {np.mean(cma_es_errors):.4f}")
-        print(f"CMA-ES Average FPS (excluding initialization): {1.0 / np.mean([t for t in all_results[label]['cma_es']['time'][10:]]):.2f} FPS")
+        print(f"CMA-ES Average Mean Mask Error: {np.mean(cma_es_errors):.4f} ± {np.std(cma_es_errors):.4f}")
+        print(f"CMA-ES Average FPS (excluding initialization): {np.mean(1 / np.array(cma_es_times)): .4f} ± {np.std(1 / np.array(cma_es_times)): .4f} FPS")
     else:
         print("No CMA-ES results to average.")
 
     if pf_errors:
-        print(f"Particle Filter Average Mean Mask Error: {np.mean(pf_errors):.4f}")
-        print(f"Particle Filter Average FPS (excluding initialization): {1.0 / np.mean([t for t in all_results[label]['pf']['time'][10:]]):.2f} FPS")
+        print(f"Particle Filter Average Mean Mask Error: {np.mean(pf_errors):.4f} ± {np.std(pf_errors):.4f}")
+        print(f"Particle Filter Average FPS (excluding initialization): {np.mean(1 / np.array(pf_times)): .4f} ± {np.std(1 / np.array(pf_times)): .4f} FPS")
     else:
         print("No Particle Filter results to average.")
+
+    # Print trajectory lengths
+    print("\nTrajectory Lengths:")
+    traj_lengths = []
+    for label, results in all_results.items():
+        lengths = []
+        if results["cma_es"] is not None:
+            lengths.append(results["cma_es"]["cTr"].shape[0])
+        if results["pf"] is not None:
+            lengths.append(results["pf"]["cTr"].shape[0])
+        if lengths:
+            traj_lengths.extend(lengths)
+            print(f"  {label}: {lengths}")
+    
+    if traj_lengths:
+        print(f"  Min: {min(traj_lengths)}, Max: {max(traj_lengths)}, Mean: {np.mean(traj_lengths):.0f}")
     
 
 

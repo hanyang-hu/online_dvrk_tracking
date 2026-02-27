@@ -94,6 +94,8 @@ class SkeletonVisualizer:
         blended,
         cTr,
         joint_angles,
+        same_color=False,
+        transparent=False
     ):
         # -----------------------------
         # Camera pose
@@ -136,7 +138,14 @@ class SkeletonVisualizer:
 
             if ok:
                 pt_neg_far = border_pt
-                cv2.line(blended, pt_base, pt_neg_far, (255, 255, 0), self.thickness)
+                # Draw line with transparency
+                if transparent:
+                    line_overlay = blended.copy()
+                    cv2.line(line_overlay, pt_base, pt_neg_far, (255, 255, 0) if not same_color else same_color, self.thickness)
+                    alpha = 0.7  # Adjust between 0 (transparent) and 1 (opaque)
+                    blended = cv2.addWeighted(line_overlay, alpha, blended, 1 - alpha, 0)
+                else:
+                    cv2.line(blended, pt_base, pt_neg_far, (255, 255, 0) if not same_color else same_color, self.thickness)
 
         # cv2.line(blended, pt_neg, pt_base, (255, 255, 0), self.thickness)
 
@@ -145,18 +154,35 @@ class SkeletonVisualizer:
         # -----------------------------
         tip_end_cam = (pose_matrix @ torch.cat([t_list[2], t_list[2].new_ones(1)]))[:3].cpu().numpy()
         pt_tip_end = self._filter_point("tip_end", self.project_cam(tip_end_cam))
-        cv2.line(blended, pt_base, pt_tip_end, (0, 255, 0), self.thickness)
+        if transparent:
+            line_overlay = blended.copy()
+            cv2.line(line_overlay, pt_base, pt_tip_end, (255, 0, 255) if not same_color else same_color, self.thickness)
+            alpha = 0.7  # Adjust between 0 (transparent) and 1 (opaque)
+            blended = cv2.addWeighted(line_overlay, alpha, blended, 1 - alpha, 0)
+        else:
+            cv2.line(blended, pt_base, pt_tip_end, (255, 0, 255) if not same_color else same_color, self.thickness)
 
         # -----------------------------
         # TIP END → TIP 1 / TIP 2
         # -----------------------------
-        tip_1 = get_img_coords(self.p_local1, R_list[2], t_list[2], pose_matrix, self.intr, None).cpu().numpy()
-        tip_2 = get_img_coords(self.p_local2, R_list[3], t_list[3], pose_matrix, self.intr, None).cpu().numpy()
+        tip_2 = get_img_coords(self.p_local1, R_list[2], t_list[2], pose_matrix, self.intr, None).cpu().numpy()
+        tip_1 = get_img_coords(self.p_local2, R_list[3], t_list[3], pose_matrix, self.intr, None).cpu().numpy()
 
         pt_tip_1 = self._filter_point("tip_1", tip_1)
         pt_tip_2 = self._filter_point("tip_2", tip_2)
 
-        cv2.line(blended, pt_tip_end, pt_tip_1, (0, 0, 255), self.thickness)
-        cv2.line(blended, pt_tip_end, pt_tip_2, (255, 0, 0), self.thickness)
+        if not same_color:
+            cv2.line(blended, pt_tip_end, pt_tip_1, (0, 0, 255), self.thickness)
+            cv2.line(blended, pt_tip_end, pt_tip_2, (255, 0, 0), self.thickness)
+        else:
+            if transparent:
+                line_overlay = blended.copy()
+                cv2.line(line_overlay, pt_tip_end, pt_tip_1, same_color, self.thickness)
+                cv2.line(line_overlay, pt_tip_end, pt_tip_2, same_color, self.thickness)
+                alpha = 0.7  # Adjust between 0 (transparent) and 1 (opaque)
+                blended = cv2.addWeighted(line_overlay, alpha, blended, 1 - alpha, 0)
+            else:
+                cv2.line(blended, pt_tip_end, pt_tip_1, same_color, self.thickness)
+                cv2.line(blended, pt_tip_end, pt_tip_2, same_color, self.thickness)
 
         return blended

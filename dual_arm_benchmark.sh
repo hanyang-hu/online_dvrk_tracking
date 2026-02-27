@@ -13,7 +13,8 @@ COMMON_ARGS="--rotation_parameterization MixAngle \
 --sample_number 2000 \
 --final_iters 100"
 
-REAL_BAGS=({0..7} {30..33})
+# REAL_BAGS=({0..7} {30..33})
+REAL_BAGS=({30..33})
 SYN_BAGS=({0..15})
 # REAL_BAGS=({0..0})
 # SYN_BAGS=({0..0})
@@ -95,13 +96,13 @@ run_variant Gradient True  10 $DATA_DIR False False $BAG
 run_variant CMA-ES False 3 $DATA_DIR False False $BAG
 run_variant CMA-ES True  3 $DATA_DIR False False $BAG
 
-# ---- Sep. (hard separation) ----
-run_variant CMA-ES False 3 $DATA_DIR True False $BAG
-run_variant CMA-ES True  3 $DATA_DIR True False $BAG
+# # ---- Sep. (hard separation) ----
+# run_variant CMA-ES False 3 $DATA_DIR True False $BAG
+# run_variant CMA-ES True  3 $DATA_DIR True False $BAG
 
-# ---- Sep. (soft separation) ----
-run_variant CMA-ES False 3 $DATA_DIR True True $BAG
-run_variant CMA-ES True  3 $DATA_DIR True True $BAG
+# # ---- Sep. (soft separation) ----
+# run_variant CMA-ES False 3 $DATA_DIR True True $BAG
+# run_variant CMA-ES True  3 $DATA_DIR True True $BAG
 }
 
 # ==========================================================
@@ -112,12 +113,12 @@ for BAG_ID in ${REAL_BAGS[@]}; do
     run_all_dual_arm surgpose
 done
 
-# ==========================================================
-# RUN ON SYNTHETIC
-# ==========================================================
-for BAG_ID in ${SYN_BAGS[@]}; do
-    BAG="$(printf '%06d' $BAG_ID)"
-    run_all_dual_arm synthetic
-done
+# # ==========================================================
+# # RUN ON SYNTHETIC
+# # ==========================================================
+# for BAG_ID in ${SYN_BAGS[@]}; do
+#     BAG="$(printf '%06d' $BAG_ID)"
+#     run_all_dual_arm synthetic
+# done
 
 echo "Dual-arm benchmark complete."

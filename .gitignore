@@ -7,6 +7,7 @@ ContourTipNet/GIFs/*
 ContourTipNet/Archive/*
 pose_reconstruction/*
 pf_tracking_results/*
+plots/*
 *.gif
 *.png
 *.zip

@@ -361,7 +361,7 @@ if __name__ == "__main__":
     )
 
     # Initialize the skeleton visualizer
-    skeleton_visualizer = SkeletonVisualizer(model, ctrnet_args, args, intr, p_local1, p_local2, thickness=5)
+    skeleton_visualizer = SkeletonVisualizer(model, ctrnet_args, args, intr, p_local1, p_local2, thickness=3, use_filter=False)
 
     @sam2_inference
     def get_init_mask(*a, **k):
@@ -442,7 +442,9 @@ if __name__ == "__main__":
                 args=args,
             )
 
-            cTr, joint_angles, loss = tracker.track_frame(ref_mask=mask, joint_angles=None, is_init=True, keypoints=torch.from_numpy(kpts).to(model.device).float() if kpts is not None else None)
+            cTr, joint_angles, loss = tracker.track_frame(
+                ref_mask=mask, joint_angles=None, is_init=True, keypoints=torch.from_numpy(kpts).to(model.device).float() if kpts is not None else None
+            )
 
             init_done = True
 
@@ -464,7 +466,10 @@ if __name__ == "__main__":
 
             torch.cuda.synchronize()
             start_time = time.time()
-            cTr, joint_angles, loss = tracker.track_frame(ref_mask=mask, joint_angles=None, is_init=False, keypoints=None)
+            cTr, joint_angles, loss = tracker.track_frame(
+                ref_mask=mask, joint_angles=None, is_init=False, keypoints=None,
+                debug=True, frame=frame, frame_idx=len(seg_time_lst), skeleton_visualizer=skeleton_visualizer
+            )
             torch.cuda.synchronize()
             end_time = time.time()
             track_time_lst.append(end_time - start_time)

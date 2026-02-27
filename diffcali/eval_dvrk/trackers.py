@@ -104,12 +104,14 @@ class DummyLogger(Logger):
             if status["pop_best_eval"] < self.best_eval:
                 self.best_solution = status["pop_best"].values.clone()
                 self.best_eval = status["pop_best_eval"]
-                # print(f"New best solution found: {self.best_solution}, evaluation: {self.best_eval}")
+                # print(f"New best solution found: {Fself.best_solution}, evaluation: {self.best_eval}")
         except:
             if self.has_warned_about_pop_best_eval:
                 return
             print(f"[Warning] status['pop_best_eval']: {status['pop_best_eval']} is not comparable.")
             self.has_warned_about_pop_best_eval = True
+
+        # print(f"Step {self._steps_count}: Current best evaluation: {self.best_eval}")
 
         self._steps_count += 1
 
@@ -146,10 +148,13 @@ class BiManualLogger(Logger):
         if status["pop_best_eval_left"] < self.best_eval_left:
             self.best_solution_left = status["pop_best_left"].clone()
             self.best_eval_left = status["pop_best_eval_left"].clone()
+            # print("[Left] New best solution found: left eval = {}, right eval = {}, total eval = {}".format(self.best_eval_left, self.best_eval_right, self.best_eval))
         if status["pop_best_eval_right"] < self.best_eval_right:    
             self.best_solution_right = status["pop_best_right"].clone()
             self.best_eval_right = status["pop_best_eval_right"].clone()
+            # print("[Right] New best solution found: left eval = {}, right eval = {}, total eval = {}".format(self.best_eval_left, self.best_eval_right, self.best_eval))
 
+        # print("Step {}: Current best eval: left eval = {}, right eval = {}, total eval = {}".format(self._steps_count, self.best_eval_left, self.best_eval_right, self.best_eval))
         self._steps_count += 1
 
 
@@ -304,6 +309,10 @@ class PoseEstimationProblem(Problem):
         if self.args.symmetric_jaw:
             joint_angles = torch.cat([joint_angles[:, :3], joint_angles[:, -1:]], dim=1)  # make jaws symmetric
 
+        # self.population = torch.cat((cTr_batch, joint_angles), dim=1).detach().cpu().numpy()  # store the current population in the original scale for logging
+        self.population_cTr = cTr_batch.detach().cpu().numpy()
+        self.population_joint_angles = joint_angles.detach().cpu().numpy()
+
         if self.args.use_mix_angle:
             R_batched = mix_angle_to_rotmat(cTr_batch[:, :3])  # shape (B, 3, 3)
             T_batched = cTr_batch[:, 3:]
@@ -441,6 +450,8 @@ class PoseEstimationProblem(Problem):
             #     print(f"NaN input: cTr = {cTr_batch[idx]}, joint_angles = {joint_angles[idx]}") 
 
         # print(loss)
+
+        self.population_loss = loss.detach().cpu().numpy()  # store the current population's loss for logging
 
         return loss
 
@@ -956,7 +967,7 @@ class Tracker:
                 ms_factor = 1. if not args.searcher == "Gradient" else 0.01 # reduce measurement noise for gradient-based searcher as it produces less noisy results
                 self.filter = KalmanFilter(
                     process_noise_pos=np.array([2e-5, 1e-4, 2e-5, 2e-5, 2e-5, 2e-5, 1e-4, 1e-4, 1e-4, 1e-4]),      # scalar or (D,)
-                    process_noise_vel=np.array([2e-4, 1e-3, 2e-4, 2e-4, 2e-4, 2e-4, 1e-3, 1e-3, 1e-3, 1e-3]),      # scalar or (D,)
+                    process_noise_vel=np.array([2e-4, 1e-3, 2e-4, 2e-4, 2e-4, 2e-4, 1e-3, 1e-3, 1e-3, 1e-3]) * 10,      # scalar or (D,)
                     measurement_noise=np.array([2e-3, 1e-2, 2e-3, 2e-3, 2e-3, 2e-3, 5e-3, 5e-3, 5e-3, 5e-3]) * ms_factor,      # scalar or (D,)
                 )
             else:
@@ -1090,7 +1101,10 @@ class Tracker:
             proj_pts=proj_keypoints,
         )
     
-    def track_frame(self, ref_mask, joint_angles, is_init=False, keypoints=None, cTr_init=None):
+    def track_frame(
+            self, ref_mask, joint_angles, is_init=False, keypoints=None, cTr_init=None, 
+            debug=False, frame=None, frame_idx=None, skeleton_visualizer=None
+    ):
         if is_init:
             # Initialization settings
             use_dist_loss = self.problem.dist_loss
@@ -1169,7 +1183,129 @@ class Tracker:
         searcher = self.optimizer(**filtered_kwargs)
         logger = DummyLogger(searcher, interval=1, after_first_step=False)
 
-        searcher.run(self.num_iters if not is_init else max(self.args.final_iters, self.num_iters))
+        if debug:
+            # Save the population for each iteration for debugging
+            # searcher_populations = []
+            population_cTrs = []
+            population_joint_angles = []
+            population_losses = []
+            for i in range(self.num_iters if not is_init else max(self.args.final_iters, self.num_iters)):
+                searcher.run(1)
+                # population = searcher.problem.population.copy()
+                # searcher_populations.append(population)
+                # Randomly select 3 candidates from the population, render their skeletons, overlay them with the image (together with the reference mask and reference keypoints)
+                # candidate_indices = np.random.choice(population.shape[0], size=min(3, population.shape[0]), replace=False)
+                # select the top 3 candidates with the lowest loss
+                # candidate_indices = np.argsort(searcher.problem.population_loss.copy())[:3]
+                
+                population_cTr, population_joint_angle = searcher.problem.population_cTr, searcher.problem.population_joint_angles
+                population_loss = searcher.problem.population_loss
+
+                population_joint_angle = torch.from_numpy(population_joint_angle).to(self.model.device)
+                if self.args.cos_reparams:
+                    population_joint_angle = self.problem.joint_angles_lb + \
+                            0.5 * joint_angles_R * (1 - torch.cos(math.pi * (population_joint_angle - self.problem.joint_angles_lb) / joint_angles_R))
+                else:
+                    population_joint_angle = torch.clamp(population_joint_angle, self.problem.joint_angles_lb, self.problem.joint_angles_ub)
+                population_joint_angle = population_joint_angle.cpu().numpy()
+                
+                population_cTrs.append(population_cTr)
+                population_joint_angles.append(population_joint_angle)
+                population_losses.append(population_loss)
+
+                # Choose the top 3 among all candidates including the past iterations to visualize
+                all_population_cTr = np.concatenate(population_cTrs, axis=0)
+                all_population_joint_angles = np.concatenate(population_joint_angles, axis=0)
+                all_population_losses = np.concatenate(population_losses, axis=0)
+                # candidate_indices = np.argsort(all_population_losses)[:5]
+                # Random select 5 candidates from all iterations for visualization
+                candidate_indices = np.random.choice(all_population_cTr.shape[0], size=min(5, all_population_cTr.shape[0]), replace=False)
+
+                # Plot the keypoints and blend the mask
+                # mask_ = (ref_mask > 0).cpu().numpy()  # binary mask
+                # color = cv2.applyColorMap(mask_, cv2.COLORMAP_JET)
+                # blended = cv2.addWeighted(frame, 0.7, color, 0.3, 0)
+                # Blend ONLY where mask is True
+                # alpha =0.3
+                blended = frame.copy()
+                # blended[mask_] = (
+                #     frame[mask_] * (1 - alpha) +
+                #     np.array((0, 255, 0), dtype=np.uint8) * alpha
+                # ).astype(np.uint8)
+
+                # 3 different colors for the candidates (try to be different but not too much to be distracting)
+                # green, cyan, blue
+                color_lst = [
+                    (200, 0, 0),
+                    (255, 0, 0),
+                    (255, 128, 0),
+                    (255, 255, 0), 
+                    (0, 255, 0), 
+                ]
+                cnt = 0
+
+                # # Plot the reference keypoints if available
+                # if ref_keypoints is not None:
+                #     for ref_pt in ref_keypoints:
+                #         u_ref, v_ref = int(ref_pt[0]), int(ref_pt[1])
+                #         cv2.circle(
+                #             blended,
+                #             (u_ref, v_ref),
+                #             radius=5,
+                #             # use yellow color for reference keypoints
+                #             color=(0, 255, 255),
+                #             thickness=-1,
+                #         )
+
+                alpha = 0.2
+
+                if frame_idx > 150:
+
+                    for idx in candidate_indices:
+                        # cTr_candidate = torch.tensor(population_cTr[idx], device=self.model.device)
+                        cTr_candidate = torch.from_numpy(all_population_cTr[idx]).to(self.model.device)
+                        cTr_candidate[:3] = mix_angle_to_axis_angle(cTr_candidate[:3].unsqueeze(0)).squeeze(0) if self.args.use_mix_angle else cTr_candidate[:3]
+                        joint_angles_candidate = torch.from_numpy(all_population_joint_angles[idx]).to(self.model.device)
+                        blended = skeleton_visualizer.plot_skeleton_overlay(blended, cTr_candidate, joint_angles_candidate, same_color=color_lst[cnt], transparent=True)
+                        # Render the mask and blend with the image
+                        # mask_candidate = self.model.render_single_robot_mask(cTr_candidate, self.robot_renderer.get_robot_mesh(joint_angles_candidate), self.robot_renderer, self.problem.render_resolution).squeeze(0).cpu().numpy()
+                        # if self.args.downscale_factor != 1:
+                        #     mask_candidate = F.interpolate(torch.from_numpy(mask_candidate).unsqueeze(0).unsqueeze(0), size=self.problem.resolution, mode='bilinear').squeeze(0).squeeze(0).numpy()
+                        # mask_candidate = (mask_candidate > 0).astype(np.uint8)
+                        # blended[mask_candidate > 0] = (
+                        #     blended[mask_candidate > 0] * (1 - alpha) +
+                        #     np.array(color_lst[cnt], dtype=np.uint8) * alpha
+                        # ).astype(np.uint8)
+
+                        if os.path.exists("debug_mask") == False:
+                            os.makedirs("debug_mask")
+
+                        cnt += 1
+                    
+                    blended_ = blended[:blended.shape[0]//2, :blended.shape[1]//2, :]
+                    cv2.imwrite(f"debug_mask/debug_frame_{frame_idx}_iter_{i}.png", blended_)
+
+                    if os.path.exists("debug_pipeline") == False:
+                        os.makedirs("debug_pipeline")
+
+                    # # Crop and only keep the upper left part of the blended image for better visualization
+                    # blended = blended[:blended.shape[0]//2, :blended.shape[1]//2, :]
+                    # frame_ = frame[:frame.shape[0]//2, :frame.shape[1]//2, :]
+                    # frame_ = cv2.resize(frame_, (blended.shape[1], blended.shape[0]))
+                    # cv2.imwrite(f"debug_pipeline/debug_frame_{frame_idx}_ref.png", blended)
+                    # cv2.imwrite(f"debug_pipeline/debug_frame_{frame_idx}_input.png", frame_)
+
+            # Print the best overall solution for debugging
+            # Choose the one from all iterations with the lowest loss
+            all_population_cTr = np.concatenate(population_cTrs, axis=0)
+            all_population_joint_angles = np.concatenate(population_joint_angles, axis=0)
+            all_population_losses = np.concatenate(population_losses, axis=0)
+            best_idx = np.argmin(all_population_losses)
+            print(f"Debug iter {i}: best loss {all_population_losses[best_idx]:.4f}, best cTr {all_population_cTr[best_idx]}, best joint angles {all_population_joint_angles[best_idx]}")
+
+
+        else:
+            searcher.run(self.num_iters if not is_init else max(self.args.final_iters, self.num_iters))
 
         with torch.no_grad():
             # Extract the best solution and evaluation from the logger
@@ -1179,6 +1315,9 @@ class Tracker:
 
             cTr, joint_angles = best_solution[:self.problem.pose_dim], best_solution[self.problem.pose_dim:]
             loss = logger.best_eval
+
+            if debug:
+                print(f"Best solution: cTr {cTr}, joint angles {joint_angles}, loss {loss}")
 
             if self.args.symmetric_jaw:
                 joint_angles = torch.cat([joint_angles[:3], joint_angles[-1:]], dim=0)  # make jaws symmetric
@@ -1543,15 +1682,16 @@ class BiManualTracker(Tracker):
         self.soft_separation = args.soft_separation
 
         if args.filter_option == "Kalman":
+            ms_factor = 1. if not args.searcher == "Gradient" else 0.01 # reduce measurement noise for gradient-based searcher as it produces less noisy results
             self.filter_left = self.filter = KalmanFilter(
                 process_noise_pos=np.array([2e-5, 1e-4, 2e-5, 2e-5, 2e-5, 2e-5, 1e-4, 1e-4, 1e-4, 1e-4]),      # scalar or (D,)
                 process_noise_vel=np.array([2e-4, 1e-3, 2e-4, 2e-4, 2e-4, 2e-4, 1e-3, 1e-3, 1e-3, 1e-3]),      # scalar or (D,)
-                measurement_noise=np.array([2e-3, 1e-2, 2e-3, 2e-3, 2e-3, 2e-3, 5e-3, 5e-3, 5e-3, 5e-3]),      # scalar or (D,)
+                measurement_noise=np.array([2e-3, 1e-2, 2e-3, 2e-3, 2e-3, 2e-3, 5e-3, 5e-3, 5e-3, 5e-3]) * ms_factor,      # scalar or (D,)
             )
             self.filter_right = self.filter = KalmanFilter(
                 process_noise_pos=np.array([2e-5, 1e-4, 2e-5, 2e-5, 2e-5, 2e-5, 1e-4, 1e-4, 1e-4, 1e-4]),      # scalar or (D,)
                 process_noise_vel=np.array([2e-4, 1e-3, 2e-4, 2e-4, 2e-4, 2e-4, 1e-3, 1e-3, 1e-3, 1e-3]),      # scalar or (D,)
-                measurement_noise=np.array([2e-3, 1e-2, 2e-3, 2e-3, 2e-3, 2e-3, 5e-3, 5e-3, 5e-3, 5e-3]),      # scalar or (D,)
+                measurement_noise=np.array([2e-3, 1e-2, 2e-3, 2e-3, 2e-3, 2e-3, 5e-3, 5e-3, 5e-3, 5e-3]) * ms_factor,      # scalar or (D,)
             )
         elif args.filter_option == "OneEuro":
             self.filter_left = self.filter = OneEuroFilter(

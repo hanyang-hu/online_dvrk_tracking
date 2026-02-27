@@ -13,10 +13,11 @@ COMMON_ARGS="--rotation_parameterization MixAngle \
 --sample_number 2000 \
 --final_iters 100"
 
-REAL_BAGS=({0..7} {30..33})
-SYN_BAGS=({0..15})
+# REAL_BAGS=({0..7} {30..33})
+# SYN_BAGS=({0..15})
 # REAL_BAGS=({0..0})
 # SYN_BAGS=({0..0})
+REAL_BAGS=({30..33})
 ARMS=("PSM1" "PSM3")
 
 # run_variant () {
@@ -167,12 +168,12 @@ run_variant XNES nvdiffrast False True Learned $ONLINE_ES_3 $DATA_DIR $BAG
 
 # -------- CMA-ES ----------
 run_variant CMA-ES nvdiffrast False True Learned $ONLINE_ES_3 $DATA_DIR $BAG
-run_variant CMA-ES nvdiffrast True  True Learned 1 $DATA_DIR $BAG
+# run_variant CMA-ES nvdiffrast True  True Learned 1 $DATA_DIR $BAG
 run_variant CMA-ES nvdiffrast True  True Learned $ONLINE_ES_3 $DATA_DIR $BAG
-run_variant CMA-ES nvdiffrast False False Learned $ONLINE_ES_3 $DATA_DIR $BAG
+# run_variant CMA-ES nvdiffrast False False Learned $ONLINE_ES_3 $DATA_DIR $BAG
 run_variant CMA-ES nvdiffrast False True None     $ONLINE_ES_3 $DATA_DIR $BAG
 run_variant CMA-ES nvdiffrast False True OpenCV   $ONLINE_ES_3 $DATA_DIR $BAG
-run_variant CMA-ES nvdiffrast False True Learned  $ONLINE_ES_3 $DATA_DIR $BAG
+# run_variant CMA-ES nvdiffrast False True Learned  $ONLINE_ES_3 $DATA_DIR $BAG
 run_variant CMA-ES nvdiffrast False True Learned  $ONLINE_ES_5 $DATA_DIR $BAG
 }
 
@@ -187,11 +188,11 @@ for ARM in ${ARMS[@]}; do
 done
 done
 
-for BAG_ID in ${SYN_BAGS[@]}; do
-for ARM in ${ARMS[@]}; do
-    BAG="$(printf '%06d' $BAG_ID)/$ARM"
-    run_all_single_arm synthetic 10 20 3 5
-done
-done
+# for BAG_ID in ${SYN_BAGS[@]}; do
+# for ARM in ${ARMS[@]}; do
+#     BAG="$(printf '%06d' $BAG_ID)/$ARM"
+#     run_all_single_arm synthetic 10 20 3 5
+# done
+# done
 
 echo "Single-arm benchmark complete."
