@@ -956,7 +956,7 @@ class Tracker:
                 ms_factor = 1. if not args.searcher == "Gradient" else 0.01 # reduce measurement noise for gradient-based searcher as it produces less noisy results
                 self.filter = KalmanFilter(
                     process_noise_pos=np.array([2e-5, 1e-4, 2e-5, 2e-5, 2e-5, 2e-5, 1e-4, 1e-4, 1e-4, 1e-4]),      # scalar or (D,)
-                    process_noise_vel=np.array([2e-4, 1e-3, 2e-4, 2e-4, 2e-4, 2e-4, 1e-3, 1e-3, 1e-3, 1e-3]),      # scalar or (D,)
+                    process_noise_vel=np.array([2e-4, 1e-3, 2e-4, 2e-4, 2e-4, 2e-4, 1e-3, 1e-3, 1e-3, 1e-3]) * 10,      # scalar or (D,)
                     measurement_noise=np.array([2e-3, 1e-2, 2e-3, 2e-3, 2e-3, 2e-3, 5e-3, 5e-3, 5e-3, 5e-3]) * ms_factor,      # scalar or (D,)
                 )
             else:

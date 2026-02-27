@@ -82,12 +82,12 @@ python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --v
 python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag6 --no_cache --use_full_joint_angles
 
 
-python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag1 --no_cache
-python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag2 --no_cache
-python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag3 --no_cache 
-python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag4 --no_cache
-python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag5 --no_cache
-python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag6 --no_cache
+python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag1
+python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag2 
+python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag3
+python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag4
+python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag5
+python scripts/custom_traj_tracking.py --use_nvdiffrast --use_bo_initializer --video_label bag6
 
 
 python scripts/custom_quantitative_results.py
@@ -128,7 +128,7 @@ def parseArgs():
 
     parser.add_argument('--use_prev_joint_angles', type=str2bool, default=False)
 
-    parser.add_argument('--rotation_parameterization', type=str, default="AxisAngle", choices=["AxisAngle", "MixAngle"])
+    parser.add_argument('--rotation_parameterization', type=str, default="MixAngle", choices=["AxisAngle", "MixAngle"])
 
     parser.add_argument('--mse_weight', type=float, default=6.) #  originally 6.
     parser.add_argument('--dist_weight', type=float, default=0.) # originally 12e-7, turned off

@@ -370,6 +370,12 @@ def evaluate_surgpose_trajectory(data_dir, cTr_seq, joint_seq, time_seq, model, 
     frame_start = 1
     frame_end = len([name for name in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, name)) and name.isdigit()])
 
+    # Make everything on GPU
+    cTr_seq = cTr_seq.cuda()
+    joint_seq = joint_seq.cuda()
+    time_seq = torch.tensor(time_seq).cuda()
+    model = model.cuda()
+
     pbar = tqdm.tqdm(range(frame_start, frame_end), desc=f"Evaluating {data_dir}")
     for i in pbar:
         frame_dir = os.path.join(data_dir, f"{i}")
@@ -406,8 +412,8 @@ def evaluate_surgpose_trajectory(data_dir, cTr_seq, joint_seq, time_seq, model, 
         ref_keypoints = torch.tensor(ref_keypoints).squeeze().float().cuda()
 
         # Render the mask from cTr_seq and joint_seq
-        cTr = cTr_seq[i-1].clone()
-        joint_angles  = joint_seq[i-1]
+        cTr = cTr_seq[i].clone()
+        joint_angles  = joint_seq[i]
 
         model.get_joint_angles(joint_angles)
         robot_mesh = robot_renderer.get_robot_mesh(joint_angles)
@@ -503,7 +509,7 @@ def evaluate_surgpose_trajectory(data_dir, cTr_seq, joint_seq, time_seq, model, 
     mean_kpts_error = np.mean(kpts_errors) if kpts_errors else None
 
     # runtime: average after first 10 frames
-    time_seq = np.array(time_seq)
+    time_seq = np.array(time_seq.cpu())
     if len(time_seq) > 10:
         avg_time = np.mean(time_seq[10:])
     else:
