@@ -35,6 +35,8 @@ import cv2
 import torch
 import kornia
 
+from diffcali.utils.skeleton_visualizer import RealTimeVideoWriter, SkeletonVisualizer
+
 
 """
 python scripts/particle_filter_tracking.py --bag_idx bag1
@@ -44,6 +46,36 @@ python scripts/particle_filter_tracking.py --bag_idx bag4
 python scripts/particle_filter_tracking.py --bag_idx bag5
 python scripts/particle_filter_tracking.py --bag_idx bag6
 """
+
+
+def parseCtRNetArgs():
+    parser = argparse.ArgumentParser()
+    args = parser.parse_args("")
+
+    args.use_gpu = True
+    args.trained_on_multi_gpus = False
+
+    # Camera intrinsics
+    # [ 1.02588223e+03,  0.0,  1.67919017e+02,
+    #    0.0, 1.02588223e+03, 2.34152707e+02,
+    #    0., 0., 1. ]
+
+    # Setting for our custom data
+    args.height = 480
+    args.width = 640
+    args.fx, args.fy, args.px, args.py = 1025.88223, 1025.88223, 167.919017, 234.152707
+
+    args.scale = 1.0
+
+    # scale the camera parameters
+    args.width = int(args.width * args.scale)
+    args.height = int(args.height * args.scale)
+    args.fx = args.fx * args.scale
+    args.fy = args.fy * args.scale
+    args.px = args.px * args.scale
+    args.py = args.py * args.scale
+
+    return args
 
 
 if __name__ == "__main__":
@@ -71,6 +103,18 @@ if __name__ == "__main__":
     cap_left = cv2.VideoCapture(video_path_left)
     cap_right = cv2.VideoCapture(video_path_right)
 
+    # ---- Real-time faithful recording setup ----
+    save_video = True
+    out_fps = 30.0  # common, compatible constant FPS for saved file
+    if not os.path.exists("./videos/"):
+        os.makedirs("./videos/")
+    out_path = os.path.join(f"./videos/pf_{args.bag_idx}_realtime_demo.mp4")
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+
+    # We'll write at original (pre-resize-back) display size: frame_shape_orig
+    # But we don't know it until we read the first frame. So: lazy init later.
+    rt_writer = None
+
     joint_angles_path = os.path.join(bag_dir, "joint_angles.yaml")
     with open(joint_angles_path, 'r') as f:
         joint_angle_data = yaml.load(f, Loader=yaml.FullLoader)
@@ -80,6 +124,52 @@ if __name__ == "__main__":
     assert len(joint_angles_np) <= int(cap_left.get(cv2.CAP_PROP_FRAME_COUNT)), "Number of joint angle readings must be less than the number of video frames"
     assert int(cap_left.get(cv2.CAP_PROP_FRAME_COUNT)) == int(cap_right.get(cv2.CAP_PROP_FRAME_COUNT)), "Left and right videos must have the same number of frames"
     print(f"Loaded {len(joint_angles_np)} joint angle readings and {int(cap_left.get(cv2.CAP_PROP_FRAME_COUNT))} video frames")
+
+
+    ctrnet_args = parseCtRNetArgs()
+    ctrnet_args.use_nvdiffrast = True
+
+    model = CtRNet(ctrnet_args)
+
+    mesh_dir = "urdfs/dVRK/meshes"
+    mesh_files = [
+        f"{mesh_dir}/low_res_shaft_multi_cylinder.ply",
+        f"{mesh_dir}/low_res_logo_low_res_1.ply",
+        f"{mesh_dir}/low_res_jawright_lowres.ply",
+        f"{mesh_dir}/low_res_jawleft_lowres.ply",
+    ]
+
+    robot_renderer = model.setup_robot_renderer(mesh_files, downscale_factor=1)
+    robot_renderer.set_mesh_visibility([True, True, True, True])
+
+    # Specify camera intrinsics and keypoints
+    intr = torch.tensor(
+        [
+            [ctrnet_args.fx, 0, ctrnet_args.px], 
+            [0, ctrnet_args.fy, ctrnet_args.py], 
+            [0, 0, 1]
+        ],
+        device="cuda",
+        dtype=torch.float32,
+    )
+
+    # if args.use_contour_tip_net:
+    #     tip_length = 0.0096 # instead of 0.009
+    # else:
+    #     tip_length = 0.009
+    tip_length = 0.0096 # Set the tip length (distance from the last joint to the tip) to 9.6mm, which is more accurate according to the keypoint prompts
+    p_local1 = (
+        torch.tensor([0.0, 0.0004, tip_length]) 
+        .to(torch.float32)
+        .to(model.device)
+    )
+    p_local2 = (
+        torch.tensor([0.0, -0.0004, tip_length])
+        .to(torch.float32)
+        .to(model.device)
+    )
+    # Initialize the skeleton visualizer
+    skeleton_visualizer = SkeletonVisualizer(model, ctrnet_args, args, intr, p_local1, p_local2, thickness=5)
 
     # Define particle filter parameters
     pf = ParticleFilter(
@@ -99,6 +189,16 @@ if __name__ == "__main__":
     for frame_idx in range(len(joint_angles_np)):
         ret_left, frame_left = cap_left.read()
         ret_right, frame_right = cap_right.read()
+
+        frame_shape_orig = frame_left.shape[1], frame_left.shape[0]  # (width, height)
+
+        if save_video and rt_writer is None:
+            rt_writer = RealTimeVideoWriter(
+                path=out_path,
+                fourcc=fourcc,
+                fps=out_fps,
+                frame_size=frame_shape_orig  # writing the final displayed resolution
+            )
 
         if not ret_left or not ret_right:
             print(f"End of video reached at frame {frame_idx}")
@@ -161,29 +261,62 @@ if __name__ == "__main__":
 
         time_lst.append(end_time - start_time)
 
-        img_list=projectSkeleton(
-            psm_arm.getSkeletonPoints(),
-            np.dot(cam_T_b, T),
-            [left_img, right_img],
-            cam.projectPoints
-        )
+        # img_list=projectSkeleton(
+        #     psm_arm.getSkeletonPoints(),
+        #     np.dot(cam_T_b, T),
+        #     [left_img, right_img],
+        #     cam.projectPoints
+        # )
 
-        display = img_list[0] # Only show left image for better visibility of keypoints and skeleton
+        # display = img_list[0] # Only show left image for better visibility of keypoints and skeleton
+        display = left_img.copy()
         display = cv2.cvtColor(display, cv2.COLOR_BGR2RGB) # Convert to RGB for correct color display in OpenCV
+        
+        display = skeleton_visualizer.plot_skeleton_overlay(display, pose_vec, joint_angles)
 
         if len(time_lst) > 10:
             # Compute FPS and display it on the image
             avg_time = sum(time_lst) / len(time_lst)
             fps = 1.0 / avg_time if avg_time > 0 else float('inf')
-            cv2.putText(display, f"FPS: {fps:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            # cv2.putText(display, f"FPS: {fps:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            cv2.putText(
+                display,
+                f"FPS: {fps:.2f}",
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (255, 255, 255),
+                2,
+            )
             # print(time_lst[-10:])
 
-        cv2.imshow("Tracking Result (Left | Right)", display)
+        cv2.imshow("Tracking Result (Left)", display)
+
+        # Add elapsed wall-clock time overlay (proof it's real-time)
+        if rt_writer is not None and rt_writer.t0 is not None:
+            elapsed = time.perf_counter() - rt_writer.t0
+            cv2.putText(
+                display,
+                f"Wall-clock time: {elapsed:7.3f}s",
+                (10, 65),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (255, 255, 255),
+                2,
+            )
+
+        # Real-time faithful write (duplicates frames if slow)
+        if rt_writer is not None:
+            rt_writer.write_realtime(display)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
     cv2.destroyAllWindows()
+
+    if rt_writer is not None:
+        rt_writer.release()
+        print(f"Saved real-time faithful video to: {out_path}")
 
     # Stack pose and joint angle estimates into tensors and save for evaluation
     pose_tensor = torch.stack(pose_lst)

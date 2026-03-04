@@ -1755,8 +1755,212 @@ class BiManualTracker(Tracker):
             proj_pts_right=proj_keypoints_right,
         )
 
-    def track(self, ref_mask, joint_angles=None, ref_keypoints=None):
-        pass
+    def track_frame(
+        self,
+        ref_mask,
+        joint_angles,
+        is_init: bool = False,
+        keypoints=None,
+        cTr_init=None,
+    ):
+        """
+        Bi-manual single-frame tracking, mimicking track_sequence() logic.
+        Expected:
+        - ref_mask: (2, H, W)  (left/right)
+        - joint_angles: (2, D)
+        - keypoints: optional; either (2, K, 2) / (2, K, >=2) or [kpts_left, kpts_right]
+        - cTr_init: optional; (2, pose_dim)
+        Returns:
+        cTr: (2, pose_dim)
+        joint_angles: (2, D)
+        loss: float (best eval)
+        """
+
+        if is_init:
+            # Initialization settings (match track_sequence's init behavior)
+            kpts_weight = self.problem.pts_weight
+            self.problem.pts_weight = 5e-3
+
+        # ---- Resize masks to problem resolution if needed (match track_sequence) ----
+        # track_sequence assumes ref_mask is (2, H, W)
+        if ref_mask.shape[1] != self.problem.resolution[0] or ref_mask.shape[2] != self.problem.resolution[1]:
+            ref_mask = F.interpolate(
+                ref_mask.float().unsqueeze(1),
+                size=self.problem.resolution,
+                mode="bilinear",
+            ).squeeze(1)
+
+        # ---- Keypoints handling (match track_sequence) ----
+        # track_sequence uses provided keypoints for i==0, and for i>0 may overwrite with contour tip net
+        # Here: if keypoints provided, use them; else if contour tip net enabled, detect per arm.
+        if keypoints is not None:
+            # Accept either list [left,right] or tensor-like
+            if isinstance(keypoints, (list, tuple)):
+                ref_keypoints = [keypoints[0], keypoints[1]]
+            else:
+                # assume shape (2, K, >=2)
+                ref_keypoints = [keypoints[0][..., :2], keypoints[1][..., :2]]
+        else:
+            ref_keypoints = None
+            if self.args.use_contour_tip_net:
+                with torch.no_grad():
+                    ref_keypoints_left = detect_keypoints_2d(
+                        model=self.tip_2d_net,
+                        mask=ref_mask[0].detach(),
+                    )
+                    ref_keypoints_right = detect_keypoints_2d(
+                        model=self.tip_2d_net,
+                        mask=ref_mask[1].detach(),
+                    )
+                ref_keypoints = [ref_keypoints_left, ref_keypoints_right]
+
+        stdev_init = self.stdev_init.clone()
+
+        # ---- Update problem (match track_sequence) ----
+        self.problem.update_problem(
+            ref_mask,
+            ref_keypoints,
+            self._prev_cTr.clone(),
+            stdev_init,
+        )
+
+        # ---- Initialize solution (match track_sequence) ----
+        cTr = self.problem.cTr_init if cTr_init is None else cTr_init.clone()
+
+        joint_angles = (
+            joint_angles.clone()
+            if not self.args.use_prev_joint_angles
+            else self._prev_joint_angles.clone()
+        )
+
+        # Bound joint angles before any reverse transform (match track_sequence)
+        joint_angles = torch.clamp(
+            joint_angles, self.problem.joint_angles_lb, self.problem.joint_angles_ub
+        )
+
+        # Reverse transform of joint angles (match track_sequence)
+        if self.args.cos_reparams:
+            joint_angles_R = self.problem.joint_angles_ub - self.problem.joint_angles_lb
+            joint_angles = self.problem.joint_angles_lb + \
+                joint_angles_R / math.pi * \
+                torch.acos(
+                    1 - 2 * (joint_angles - self.problem.joint_angles_lb) / joint_angles_R
+                )
+
+        if self.args.symmetric_jaw:
+            center_init = torch.cat([cTr, joint_angles[:, :3]], dim=1).reshape(-1)
+        else:
+            center_init = torch.cat([cTr, joint_angles], dim=1).reshape(-1)
+
+        # In single-frame mode we follow track_sequence's "init_flag" logic:
+        # If is_init=True -> treat like initialization (smaller popsize, more iters).
+        init_flag = bool(is_init)
+
+        kwargs = dict(
+            problem=self.problem,
+            stdev_init=1.0,
+            center_init=center_init / self.problem.lengthscales,
+            popsize=self.args.popsize if not init_flag else min(self.args.popsize, 30),
+            sobol=self.sobol,
+        )
+
+        # Match track_sequence's constructor filtering behavior (supports **kwargs)
+        sig = inspect.signature(self.optimizer.__init__)
+        has_var_kw = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+        if has_var_kw:
+            filtered_kwargs = kwargs
+        else:
+            accepted = set(sig.parameters.keys())
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k in accepted}
+
+        searcher = self.optimizer(**filtered_kwargs)
+        logger = (
+            BiManualLogger(searcher, interval=1, after_first_step=False)
+            if getattr(self, "separate_loss", False)
+            else DummyLogger(searcher, interval=1, after_first_step=False)
+        )
+
+        searcher.run(self.num_iters if not init_flag else max(self.args.final_iters, self.num_iters))
+
+        with torch.no_grad():
+            best_solution = logger.best_solution
+            best_solution = best_solution * self.problem.lengthscales
+            best_solution = best_solution.reshape(2, -1)
+
+            cTr = best_solution[:, : self.problem.pose_dim]
+            joint_angles = best_solution[:, self.problem.pose_dim :]
+            loss = logger.best_eval
+
+            if self.args.symmetric_jaw:
+                joint_angles = torch.cat([joint_angles[:, :3], joint_angles[:, -1:]], dim=1)
+
+            # Forward transform / clamp (match track_sequence)
+            if self.args.cos_reparams:
+                joint_angles = self.problem.joint_angles_lb + \
+                    0.5 * joint_angles_R * (
+                        1 - torch.cos(
+                            math.pi * (joint_angles - self.problem.joint_angles_lb) / joint_angles_R
+                        )
+                    )
+            else:
+                joint_angles = torch.clamp(
+                    joint_angles, self.problem.joint_angles_lb, self.problem.joint_angles_ub
+                )
+
+            # ---- Optional filtering (bi-manual, match track_sequence) ----
+            if self.args.use_filter:
+                # LEFT
+                full_state_left = torch.cat([cTr[0, :], joint_angles[0, :]], dim=0).cpu().numpy()
+                if init_flag:
+                    self.filter_left.reset(full_state_left)
+                else:
+                    for j in range(3):
+                        prev_cTr_np = self._prev_cTr[0][j].cpu().numpy()
+                        curr_cTr_np = full_state_left[j]
+                        full_state_left[j] = np.unwrap(
+                            np.array([prev_cTr_np, curr_cTr_np]), axis=0
+                        )[1]
+                    self.filter_left.update(full_state_left)
+
+                filtered_left = self.filter_left.get_x_hat()
+                cTr_left = torch.from_numpy(filtered_left[: self.problem.pose_dim]).to(self.model.device).type(cTr.dtype)
+                joint_left = torch.from_numpy(filtered_left[self.problem.pose_dim :]).to(self.model.device).type(joint_angles.dtype)
+
+                # RIGHT
+                full_state_right = torch.cat([cTr[1, :], joint_angles[1, :]], dim=0).cpu().numpy()
+                if init_flag:
+                    self.filter_right.reset(full_state_right)
+                else:
+                    for j in range(3):
+                        prev_cTr_np = self._prev_cTr[1][j].cpu().numpy()
+                        curr_cTr_np = full_state_right[j]
+                        full_state_right[j] = np.unwrap(
+                            np.array([prev_cTr_np, curr_cTr_np]), axis=0
+                        )[1]
+                    self.filter_right.update(full_state_right)
+
+                filtered_right = self.filter_right.get_x_hat()
+                cTr_right = torch.from_numpy(filtered_right[: self.problem.pose_dim]).to(self.model.device).type(cTr.dtype)
+                joint_right = torch.from_numpy(filtered_right[self.problem.pose_dim :]).to(self.model.device).type(joint_angles.dtype)
+
+                cTr = th.stack([cTr_left, cTr_right], dim=0)
+                joint_angles = th.stack([joint_left, joint_right], dim=0)
+
+            self._prev_cTr = cTr.detach().clone()
+            self._prev_joint_angles = joint_angles.detach().clone()
+
+            # Optional conversion to axis-angle on output (match track_sequence)
+            if self.args.use_mix_angle:
+                mix_angle = cTr[:, :3]
+                axis_angle = mix_angle_to_axis_angle(mix_angle)
+                cTr[:, :3] = axis_angle
+
+        if is_init:
+            self.problem.pts_weight = kpts_weight  # restore pts weight
+
+        return cTr, joint_angles, loss
 
     def track_sequence(
         self, mask_lst, joint_angles_lst, ref_keypoints_lst, det_line_params_lst, visualization=False

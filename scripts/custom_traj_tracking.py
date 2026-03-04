@@ -33,7 +33,7 @@ from core.utils import *
 
 from diffcali.models.CtRNet import CtRNet
 from diffcali.utils.ui_utils import *
-from diffcali.utils.skeleton_visualizer import SkeletonVisualizer
+from diffcali.utils.skeleton_visualizer import RealTimeVideoWriter, SkeletonVisualizer
 from diffcali.eval_dvrk.batch_optimize import BatchOptimize, HeterogeneousBatchOptimize
 from diffcali.eval_dvrk.optimize import Optimize
 from diffcali.eval_dvrk.black_box_optimize import BlackBoxOptimize
@@ -433,6 +433,16 @@ if __name__ == "__main__":
     # print(args.video_path)
     cap = cv2.VideoCapture(args.video_path)
 
+    # ---- Real-time faithful recording setup ----
+    save_video = True
+    out_fps = 30.0  # common, compatible constant FPS for saved file
+    if not os.path.exists("./videos/"):
+        os.makedirs("./videos/")
+    out_path = os.path.join(f"./videos/cma_es_{args.video_label}_realtime_demo.mp4")
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+
+    rt_writer = None
+
     bag_dir = f'data/custom/{args.video_label}'
     joint_angles_path = os.path.join(bag_dir, "joint_angles.yaml")
     # print(joint_angles_path)
@@ -472,6 +482,14 @@ if __name__ == "__main__":
 
         frame_shape_orig = (frame.shape[1], frame.shape[0]) # (width, height)
         frame = cv2.resize(frame, (ctrnet_args.width, ctrnet_args.height))
+
+        if save_video and rt_writer is None:
+            rt_writer = RealTimeVideoWriter(
+                path=out_path,
+                fourcc=fourcc,
+                fps=out_fps,
+                frame_size=frame_shape_orig  # writing the final displayed resolution
+            )
 
         # Make the frame darker to improve SAM segmentation results (since the original video is quite bright and has low contrast)
         frame = (frame * args.dark_factor).astype(np.uint8)
@@ -611,11 +629,33 @@ if __name__ == "__main__":
             )
 
         cv2.imshow("frame", blended)
+
+        # Add elapsed wall-clock time overlay (proof it's real-time)
+        if rt_writer is not None and rt_writer.t0 is not None:
+            elapsed = time.perf_counter() - rt_writer.t0
+            cv2.putText(
+                blended,
+                f"Wall-clock time: {elapsed:7.3f}s",
+                (10, 65),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (255, 255, 255),
+                2,
+            )
+
+        # Real-time faithful write (duplicates frames if slow)
+        if rt_writer is not None:
+            rt_writer.write_realtime(blended)
+
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
     cap.release()
     cv2.destroyAllWindows()
+
+    if rt_writer is not None:
+        rt_writer.release()
+        print(f"Saved real-time faithful video to: {out_path}")
 
     # Compute the average FPS over the sequence (drop the first 10 frames to exclude initialization time)
     if len(seg_time_lst) > 10 and len(track_time_lst) > 10:

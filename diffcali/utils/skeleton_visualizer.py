@@ -2,6 +2,7 @@ import numpy as np
 from collections import defaultdict
 import cv2
 import torch
+import time
 
 from diffcali.eval_dvrk.LND_fk import lndFK
 from diffcali.utils.projection_utils import get_img_coords
@@ -160,3 +161,41 @@ class SkeletonVisualizer:
         cv2.line(blended, pt_tip_end, pt_tip_2, (255, 0, 0), self.thickness)
 
         return blended
+
+
+class RealTimeVideoWriter:
+    """
+    Writes constant-FPS video whose *duration matches real wall-clock time*.
+    If your processing is slow, it duplicates the last frame to fill time.
+    """
+    def __init__(self, path, fourcc, fps, frame_size):
+        self.fps = float(fps)
+        self.dt = 1.0 / self.fps
+        self.writer = cv2.VideoWriter(path, fourcc, self.fps, frame_size)
+        if not self.writer.isOpened():
+            raise RuntimeError(f"Failed to open VideoWriter at: {path}")
+
+        self.t0 = None
+        self.next_t = None
+        self.last_frame = None
+
+    def start(self):
+        t = time.perf_counter()
+        self.t0 = t
+        self.next_t = t
+
+    def write_realtime(self, frame_bgr):
+        if self.t0 is None:
+            self.start()
+
+        self.last_frame = frame_bgr
+        now = time.perf_counter()
+
+        # Fill the timeline up to 'now'
+        while self.next_t <= now:
+            self.writer.write(self.last_frame)
+            self.next_t += self.dt
+
+    def release(self):
+        # Optionally flush a tiny bit (not required). Keep simple:
+        self.writer.release()

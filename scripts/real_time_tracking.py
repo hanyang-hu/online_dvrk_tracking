@@ -25,7 +25,7 @@ for p in LOCAL_MODULE_DIRS:
 
 from diffcali.models.CtRNet import CtRNet
 from diffcali.utils.ui_utils import *
-from diffcali.utils.skeleton_visualizer import SkeletonVisualizer
+from diffcali.utils.skeleton_visualizer import SkeletonVisualizer, RealTimeVideoWriter
 from diffcali.eval_dvrk.batch_optimize import BatchOptimize, HeterogeneousBatchOptimize
 from diffcali.eval_dvrk.optimize import Optimize
 from diffcali.eval_dvrk.black_box_optimize import BlackBoxOptimize
@@ -65,41 +65,41 @@ def sam2_inference(func):
 
 def parseArgs():
     """
-    python scripts/real_time_tracking.py --sample_number 1000 --no_cache --use_bo_initializer --use_nvdiffrast --video_label 000000 --machine_label PSM1
-    python scripts/real_time_tracking.py --sample_number 1000 --no_cache --use_bo_initializer --use_nvdiffrast --video_label 000000 --machine_label PSM3
+    python scripts/real_time_tracking.py --sample_number 1000  --use_bo_initializer --use_nvdiffrast --video_label 000000 --machine_label PSM1
+    python scripts/real_time_tracking.py --sample_number 1000  --use_bo_initializer --use_nvdiffrast --video_label 000000 --machine_label PSM3
     
-    python scripts/real_time_tracking.py --sample_number 1000 --no_cache --use_bo_initializer --use_nvdiffrast --video_label 000001 --machine_label PSM1
-    python scripts/real_time_tracking.py --sample_number 1000 --no_cache --use_bo_initializer --use_nvdiffrast --video_label 000001 --machine_label PSM3
+    python scripts/real_time_tracking.py --sample_number 1000  --use_bo_initializer --use_nvdiffrast --video_label 000001 --machine_label PSM1
+    python scripts/real_time_tracking.py --sample_number 1000  --use_bo_initializer --use_nvdiffrast --video_label 000001 --machine_label PSM3
     
-    python scripts/real_time_tracking.py --sample_number 1000 --no_cache --use_bo_initializer --use_nvdiffrast --video_label 000002 --machine_label PSM1
-    python scripts/real_time_tracking.py --sample_number 1000 --no_cache --use_bo_initializer --use_nvdiffrast --video_label 000002 --machine_label PSM3
+    python scripts/real_time_tracking.py --sample_number 1000  --use_bo_initializer --use_nvdiffrast --video_label 000002 --machine_label PSM1
+    python scripts/real_time_tracking.py --sample_number 1000  --use_bo_initializer --use_nvdiffrast --video_label 000002 --machine_label PSM3
     
-    python scripts/real_time_tracking.py --sample_number 1000 --no_cache --use_bo_initializer --use_nvdiffrast --video_label 000003 --machine_label PSM1
-    python scripts/real_time_tracking.py --sample_number 1000 --no_cache --use_bo_initializer --use_nvdiffrast --video_label 000003 --machine_label PSM3
+    python scripts/real_time_tracking.py --sample_number 1000  --use_bo_initializer --use_nvdiffrast --video_label 000003 --machine_label PSM1
+    python scripts/real_time_tracking.py --sample_number 1000  --use_bo_initializer --use_nvdiffrast --video_label 000003 --machine_label PSM3
     
-    python scripts/real_time_tracking.py --sample_number 1000 --no_cache --use_bo_initializer --use_nvdiffrast --video_label 000004 --machine_label PSM1
-    python scripts/real_time_tracking.py --sample_number 1000 --no_cache --use_bo_initializer --use_nvdiffrast --video_label 000004 --machine_label PSM3
+    python scripts/real_time_tracking.py --sample_number 1000  --use_bo_initializer --use_nvdiffrast --video_label 000004 --machine_label PSM1
+    python scripts/real_time_tracking.py --sample_number 1000  --use_bo_initializer --use_nvdiffrast --video_label 000004 --machine_label PSM3
     
-    python scripts/real_time_tracking.py --sample_number 1000 --no_cache --use_bo_initializer --use_nvdiffrast --video_label 000005 --machine_label PSM1
-    python scripts/real_time_tracking.py --sample_number 1000 --no_cache --use_bo_initializer --use_nvdiffrast --video_label 000005 --machine_label PSM3
+    python scripts/real_time_tracking.py --sample_number 1000  --use_bo_initializer --use_nvdiffrast --video_label 000005 --machine_label PSM1
+    python scripts/real_time_tracking.py --sample_number 1000  --use_bo_initializer --use_nvdiffrast --video_label 000005 --machine_label PSM3
 
-    python scripts/real_time_tracking.py --sample_number 1000 --no_cache --use_bo_initializer --use_nvdiffrast --video_label 000006 --machine_label PSM1
-    python scripts/real_time_tracking.py --sample_number 1000 --no_cache --use_bo_initializer --use_nvdiffrast --video_label 000006 --machine_label PSM3
+    python scripts/real_time_tracking.py --sample_number 1000  --use_bo_initializer --use_nvdiffrast --video_label 000006 --machine_label PSM1
+    python scripts/real_time_tracking.py --sample_number 1000  --use_bo_initializer --use_nvdiffrast --video_label 000006 --machine_label PSM3
     
-    python scripts/real_time_tracking.py --sample_number 1000 --no_cache --use_bo_initializer --use_nvdiffrast --video_label 000007 --machine_label PSM1
-    python scripts/real_time_tracking.py --sample_number 1000 --no_cache --use_bo_initializer --use_nvdiffrast --video_label 000007 --machine_label PSM3
+    python scripts/real_time_tracking.py --sample_number 1000  --use_bo_initializer --use_nvdiffrast --video_label 000007 --machine_label PSM1
+    python scripts/real_time_tracking.py --sample_number 1000  --use_bo_initializer --use_nvdiffrast --video_label 000007 --machine_label PSM3
     
-    python scripts/real_time_tracking.py --sample_number 1000 --no_cache --use_bo_initializer --use_nvdiffrast --video_label 000030 --machine_label PSM1
-    python scripts/real_time_tracking.py --sample_number 1000 --no_cache --use_bo_initializer --use_nvdiffrast --video_label 000030 --machine_label PSM3
+    python scripts/real_time_tracking.py --sample_number 1000  --use_bo_initializer --use_nvdiffrast --video_label 000030 --machine_label PSM1
+    python scripts/real_time_tracking.py --sample_number 1000  --use_bo_initializer --use_nvdiffrast --video_label 000030 --machine_label PSM3
     
-    python scripts/real_time_tracking.py --sample_number 1000 --no_cache --use_bo_initializer --use_nvdiffrast --video_label 000031 --machine_label PSM1
-    python scripts/real_time_tracking.py --sample_number 1000 --no_cache --use_bo_initializer --use_nvdiffrast --video_label 000031 --machine_label PSM3
+    python scripts/real_time_tracking.py --sample_number 1000  --use_bo_initializer --use_nvdiffrast --video_label 000031 --machine_label PSM1
+    python scripts/real_time_tracking.py --sample_number 1000  --use_bo_initializer --use_nvdiffrast --video_label 000031 --machine_label PSM3
     
-    python scripts/real_time_tracking.py --sample_number 1000 --no_cache --use_bo_initializer --use_nvdiffrast --video_label 000032 --machine_label PSM1
-    python scripts/real_time_tracking.py --sample_number 1000 --no_cache --use_bo_initializer --use_nvdiffrast --video_label 000032 --machine_label PSM3
+    python scripts/real_time_tracking.py --sample_number 1000  --use_bo_initializer --use_nvdiffrast --video_label 000032 --machine_label PSM1
+    python scripts/real_time_tracking.py --sample_number 1000  --use_bo_initializer --use_nvdiffrast --video_label 000032 --machine_label PSM3
     
-    python scripts/real_time_tracking.py --sample_number 1000 --no_cache --use_bo_initializer --use_nvdiffrast --video_label 000033 --machine_label PSM1
-    python scripts/real_time_tracking.py --sample_number 1000 --no_cache --use_bo_initializer --use_nvdiffrast --video_label 000033 --machine_label PSM3
+    python scripts/real_time_tracking.py --sample_number 1000  --use_bo_initializer --use_nvdiffrast --video_label 000033 --machine_label PSM1
+    python scripts/real_time_tracking.py --sample_number 1000  --use_bo_initializer --use_nvdiffrast --video_label 000033 --machine_label PSM3
 
     """
     parser = argparse.ArgumentParser()
@@ -456,6 +456,17 @@ if __name__ == "__main__":
 
     cap = cv2.VideoCapture(args.video_path)
 
+    # ---- Real-time faithful recording setup ----
+    save_video = True
+    out_fps = 30.0  # common, compatible constant FPS for saved file
+    if not os.path.exists("./videos/"):
+        os.makedirs("./videos/")
+    searcher = "cma_es" if args.searcher == "CMA-ES" else "gradient" if args.searcher == "Gradient" else "None"
+    out_path = os.path.join(f"./videos/{searcher}_{args.video_label}_{args.machine_label}_realtime_demo_surgpose.mp4")
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+
+    rt_writer = None
+
     init_done = False
     cTr_lst, joint_angles_lst = [], []
     seg_time_lst = []
@@ -469,6 +480,14 @@ if __name__ == "__main__":
 
         frame_shape_orig = (frame.shape[1], frame.shape[0]) # (width, height)
         frame = cv2.resize(frame, (ctrnet_args.width, ctrnet_args.height))
+
+        if save_video and rt_writer is None:
+            rt_writer = RealTimeVideoWriter(
+                path=out_path,
+                fourcc=fourcc,
+                fps=out_fps,
+                frame_size=frame_shape_orig  # writing the final displayed resolution
+            )
 
         if not init_done:
             predictor.load_first_frame(frame)
@@ -561,7 +580,8 @@ if __name__ == "__main__":
             fps = 1 / avg_time if avg_time > 0 else 0
             cv2.putText(
                 blended,
-                f"Frame: {frame_idx} | Loss: {loss:.4f} | FPS: {fps:.2f}",
+                # f"Frame: {frame_idx} | Loss: {loss:.4f} | FPS: {fps:.2f}",
+                f"Loss: {loss:.4f} | FPS: {fps:.2f}",
                 (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 1,
@@ -570,11 +590,29 @@ if __name__ == "__main__":
             )
 
         cv2.imshow("frame", blended)
+
+        # Add elapsed wall-clock time overlay (proof it's real-time)
+        if rt_writer is not None and rt_writer.t0 is not None:
+            elapsed = time.perf_counter() - rt_writer.t0
+            cv2.putText(
+                blended,
+                f"Wall-clock time: {elapsed:7.3f}s",
+                (10, 65),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (255, 255, 255),
+                2,
+            )
+
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
     cap.release()
     cv2.destroyAllWindows()
+
+    if rt_writer is not None:
+        rt_writer.release()
+        print(f"Saved real-time faithful video to: {out_path}")
 
     # Compute the average FPS over the sequence (drop the first 10 frames to exclude initialization time)
     if len(seg_time_lst) > 10 and len(track_time_lst) > 10:

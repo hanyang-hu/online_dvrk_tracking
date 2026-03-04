@@ -11,6 +11,7 @@ pf_tracking_results/*
 *.png
 *.zip
 *.csv
+videos/*
 
 # python
 __pycache__/
