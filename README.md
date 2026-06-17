@@ -1,4 +1,8 @@
-# Environment setup
+# Real-time Rendering-based Surgical Instrument Tracking via Evolutionary Optimization
+
+Implementation of the paper (https://arxiv.org/abs/2603.11404).
+
+## Environment setup
 
 This code has been tested on **Ubuntu 22.04** and **Ubuntu 24.04 (WSL 2)** with **CUDA 12.6**.
 
@@ -41,7 +45,7 @@ pip install .
 
 Download the pretrained weights from [sam2.1_hiera_s_endo18](https://drive.google.com/file/d/1DyrrLKst1ZQwkgKM7BWCCwLxSXAgOcMI/view?usp=drive_link), and place it under `./SurgicalSAM2/checkpoints`.
 
-# Run benchmarking scripts
+## Run benchmarking scripts
 
 ### Synthetic and Real-world (SurgPose) Datasets
 
@@ -60,9 +64,9 @@ python ./scripts/dual_arm_quantitative_results.py --evaluate_surgpose
 
 **Note.** This dataset includes 6 trajectories of LND with painted markers to benchmark our method with the particle filters.
 
-# Calibrate online videos
+## Calibrate online videos
 
-## Step 1: Prepare the input video
+### Step 1: Prepare the input video
 
 Place the video at:
 
@@ -78,7 +82,7 @@ data/online_videos/000000/video.mp4
 
 ---
 
-## Step 2: Annotate the first frame (interactive)
+### Step 2: Annotate the first frame (interactive)
 
 Run the video annotator to initialize keypoints and SAM prompts:
 
@@ -99,7 +103,7 @@ python scripts/video_annotator.py \
 
 ---
 
-## Step 3: Run video calibration
+### Step 3: Run video calibration
 
 After annotation, start video calibration:
 
