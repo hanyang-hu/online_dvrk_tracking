@@ -49,7 +49,7 @@ Download the pretrained weights from [sam2.1_hiera_s_endo18](https://drive.googl
 
 ### Synthetic and Real-world (SurgPose) Datasets
 
-Download the data from https://drive.google.com/file/d/1EKDdBhwoUJQ-o0qPJaMteezpD79vwvtJ/view?usp=sharing and place it under the `./data` folder.
+Download the data from https://drive.google.com/file/d/1OMzfWk6YrdWGG1eYGsACH1CmfpZhoXFg/view?usp=drive_link and place it under the `./data` folder.
 
 Run the following commands to benchmark on the synthetic and real-world datasets:
 ```
