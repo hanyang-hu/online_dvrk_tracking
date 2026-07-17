@@ -119,6 +119,8 @@ class MockDvrkPublisher(Node):
         self.publish_index = 0
         self.period = 1.0 / float(args.rate)
         self.start_time_ns = self.get_clock().now().nanoseconds
+        self._rate_window_start = time.perf_counter()
+        self._rate_window_count = 0
         self.timer = self.create_timer(self.period, self._publish_next)
         self.get_logger().info(
             f"Loaded {self.sample_count} paired samples. Publishing at {args.rate:.3f} Hz."
@@ -152,7 +154,7 @@ class MockDvrkPublisher(Node):
         publish_time = time.perf_counter() - publish_start
         callback_time = time.perf_counter() - callback_start
 
-        if callback_time > 0.08:
+        if callback_time > min(0.08, self.period * 0.8):
             self.get_logger().warning(
                 f"Slow callback at frame {sample_index}: "
                 f"total={callback_time:.3f}s, "
@@ -164,6 +166,17 @@ class MockDvrkPublisher(Node):
             )
 
         self.publish_index += 1
+        self._rate_window_count += 1
+        now = time.perf_counter()
+        elapsed = now - self._rate_window_start
+        if elapsed >= 2.0:
+            actual_rate = self._rate_window_count / elapsed
+            self.get_logger().info(
+                f"Actual publish rate: {actual_rate:.2f} Hz "
+                f"(target {1.0 / self.period:.2f} Hz)"
+            )
+            self._rate_window_start = now
+            self._rate_window_count = 0
 
 
 def parse_args() -> argparse.Namespace:

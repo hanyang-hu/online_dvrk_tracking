@@ -10,7 +10,7 @@ import numpy as np
 import torch
 
 try:
-    from PySide6.QtCore import QThread, Qt, Signal
+    from PySide6.QtCore import QObject, QThread, Qt, Signal
     from PySide6.QtGui import QImage, QMouseEvent, QPixmap
     from PySide6.QtWidgets import (
         QApplication,
@@ -53,6 +53,29 @@ from gui_live_tracking.worker import TrackingWorker
 from sam2.build_sam import build_sam2_camera_predictor
 
 
+class PreviewLoader(QObject):
+    completed = Signal(object, str)
+
+    def __init__(self, config: LiveTrackingConfig, timeout_sec: float):
+        super().__init__()
+        self.config = config
+        self.timeout_sec = timeout_sec
+
+    def run(self) -> None:
+        source = create_frame_source(self.config)
+        try:
+            source.start()
+            sample = source.get_sample(timeout_sec=self.timeout_sec)
+            if sample is None:
+                self.completed.emit(None, "")
+            else:
+                self.completed.emit(sample, "")
+        except Exception as exc:
+            self.completed.emit(None, str(exc))
+        finally:
+            source.stop()
+
+
 class VideoLabel(QLabel):
     clicked = Signal(int, int, int)
 
@@ -91,6 +114,8 @@ class MainWindow(QMainWindow):
 
         self.worker_thread: Optional[QThread] = None
         self.worker: Optional[TrackingWorker] = None
+        self.preview_thread: Optional[QThread] = None
+        self.preview_worker: Optional[PreviewLoader] = None
 
         self.preview_rgb = None
         self.preview_base_rgb = None
@@ -143,7 +168,7 @@ class MainWindow(QMainWindow):
         self.input_mode_combo = QComboBox()
         self.input_mode_combo.addItem("Offline", "offline")
         self.input_mode_combo.addItem("Mock live", "mock_live")
-        self.input_mode_combo.addItem("ROS 2 bridge", "ros2_bridge")
+        self.input_mode_combo.addItem("ROS 2", "ros2")
 
         self.mock_rate_spin = QDoubleSpinBox()
         self.mock_rate_spin.setRange(0.1, 240.0)
@@ -151,12 +176,21 @@ class MainWindow(QMainWindow):
         self.mock_rate_spin.setValue(30.0)
         self.mock_loop_checkbox = QCheckBox("Loop")
 
-        self.bridge_input_endpoint = QLineEdit("tcp://127.0.0.1:5555")
-        self.bridge_result_endpoint = QLineEdit("tcp://127.0.0.1:5556")
-        self.bridge_timeout_spin = QDoubleSpinBox()
-        self.bridge_timeout_spin.setRange(0.05, 10.0)
-        self.bridge_timeout_spin.setDecimals(2)
-        self.bridge_timeout_spin.setValue(0.5)
+        self.ros_image_topic = QLineEdit("/stereo/left/image")
+        self.ros_joint_topic = QLineEdit("/dvrk/PSM3/state_joint_current")
+        self.ros_jaw_topic = QLineEdit("/dvrk/PSM3/state_jaw_current")
+        self.ros_sync_queue_size = QSpinBox()
+        self.ros_sync_queue_size.setRange(1, 100)
+        self.ros_sync_queue_size.setValue(5)
+        self.ros_sync_slop = QDoubleSpinBox()
+        self.ros_sync_slop.setRange(0.0, 1.0)
+        self.ros_sync_slop.setDecimals(3)
+        self.ros_sync_slop.setSingleStep(0.005)
+        self.ros_sync_slop.setValue(0.015)
+        self.sample_timeout_spin = QDoubleSpinBox()
+        self.sample_timeout_spin.setRange(0.05, 10.0)
+        self.sample_timeout_spin.setDecimals(2)
+        self.sample_timeout_spin.setValue(0.5)
         self.ros_frame_id = QLineEdit("camera_left_optical_frame")
         self.ros_child_frame_id = QLineEdit("PSM3_joint4_tracked")
 
@@ -164,11 +198,14 @@ class MainWindow(QMainWindow):
         input_form.addRow("Mode", self.input_mode_combo)
         self._add_mode_row(input_form, "Replay rate", self.mock_rate_spin, {"mock_live"})
         self._add_mode_row(input_form, "Loop", self.mock_loop_checkbox, {"mock_live"})
-        self._add_mode_row(input_form, "Input endpoint", self.bridge_input_endpoint, {"ros2_bridge"})
-        self._add_mode_row(input_form, "Result endpoint", self.bridge_result_endpoint, {"ros2_bridge"})
-        self._add_mode_row(input_form, "Sample timeout", self.bridge_timeout_spin, {"ros2_bridge"})
-        self._add_mode_row(input_form, "ROS frame ID", self.ros_frame_id, {"ros2_bridge"})
-        self._add_mode_row(input_form, "ROS child frame ID", self.ros_child_frame_id, {"ros2_bridge"})
+        self._add_mode_row(input_form, "Image topic", self.ros_image_topic, {"ros2"})
+        self._add_mode_row(input_form, "Arm joint topic", self.ros_joint_topic, {"ros2"})
+        self._add_mode_row(input_form, "Jaw topic", self.ros_jaw_topic, {"ros2"})
+        self._add_mode_row(input_form, "Sync queue size", self.ros_sync_queue_size, {"ros2"})
+        self._add_mode_row(input_form, "Sync slop", self.ros_sync_slop, {"ros2"})
+        self._add_mode_row(input_form, "Sample timeout", self.sample_timeout_spin, {"ros2"})
+        self._add_mode_row(input_form, "ROS frame ID", self.ros_frame_id, {"ros2"})
+        self._add_mode_row(input_form, "ROS child frame ID", self.ros_child_frame_id, {"ros2"})
 
         self.renderer_combo = QComboBox()
         self.renderer_combo.addItems(["nvdiffrast", "pytorch3d"])
@@ -300,7 +337,7 @@ class MainWindow(QMainWindow):
 
     def _log(self, text: str) -> None:
         self.status_text.append(text)
-        if text in {"Waiting for ROS 2 bridge samples...", "ROS 2 bridge sample received."}:
+        if text in {"Waiting for ROS 2 samples...", "ROS 2 sample received."}:
             self.statusBar().showMessage(text)
 
     def _resolve_path(self, text: str) -> Path:
@@ -320,9 +357,12 @@ class MainWindow(QMainWindow):
             input_mode=self.input_mode_combo.currentData(),
             mock_rate_hz=self.mock_rate_spin.value(),
             mock_loop=self.mock_loop_checkbox.isChecked(),
-            bridge_input_endpoint=self.bridge_input_endpoint.text().strip(),
-            bridge_result_endpoint=self.bridge_result_endpoint.text().strip(),
-            bridge_sample_timeout_sec=self.bridge_timeout_spin.value(),
+            sample_timeout_sec=self.sample_timeout_spin.value(),
+            ros_image_topic=self.ros_image_topic.text().strip(),
+            ros_joint_topic=self.ros_joint_topic.text().strip(),
+            ros_jaw_topic=self.ros_jaw_topic.text().strip(),
+            ros_sync_queue_size=self.ros_sync_queue_size.value(),
+            ros_sync_slop_sec=self.ros_sync_slop.value(),
             ros_frame_id=self.ros_frame_id.text().strip(),
             ros_child_frame_id=self.ros_child_frame_id.text().strip(),
             renderer=self.renderer_combo.currentText(),
@@ -382,10 +422,14 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Invalid configuration", "\n".join(errors))
             return
 
+        if cfg.input_mode == "ros2":
+            self._load_ros_initialization_frame(cfg)
+            return
+
         source = create_frame_source(cfg)
         try:
             source.start()
-            sample = source.get_sample(timeout_sec=5.0 if cfg.input_mode == "ros2_bridge" else cfg.bridge_sample_timeout_sec)
+            sample = source.get_sample(timeout_sec=cfg.sample_timeout_sec)
         except Exception as exc:
             QMessageBox.warning(self, "Source error", str(exc))
             return
@@ -393,21 +437,63 @@ class MainWindow(QMainWindow):
             source.stop()
 
         if sample is None:
-            if cfg.input_mode == "ros2_bridge":
-                QMessageBox.warning(
-                    self,
-                    "No bridge sample",
-                    "No sample received from the ROS 2 bridge.\n\n"
-                    "Confirm that:\n"
-                    "1. The ROS 2 publisher is running.\n"
-                    "2. The ROS 2 bridge is running.\n"
-                    "3. The configured ZeroMQ endpoint matches the bridge.\n"
-                    "4. The image and joint topics are being published.",
-                )
-            else:
-                QMessageBox.warning(self, "Source error", "Could not read an initialization sample.")
+            QMessageBox.warning(self, "Source error", "Could not read an initialization sample.")
             return
 
+        self._use_initialization_sample(sample)
+
+    def _load_ros_initialization_frame(self, cfg: LiveTrackingConfig) -> None:
+        if self.preview_thread is not None:
+            self._log("Already waiting for a ROS 2 initialization sample.")
+            return
+
+        self._log("Waiting for ROS 2 initialization sample...")
+        self.statusBar().showMessage("Waiting for ROS 2 initialization sample...")
+        self.load_frame_btn.setEnabled(False)
+
+        self.preview_thread = QThread(self)
+        self.preview_worker = PreviewLoader(cfg, timeout_sec=5.0)
+        self.preview_worker.moveToThread(self.preview_thread)
+        self.preview_thread.started.connect(self.preview_worker.run)
+        self.preview_worker.completed.connect(self._on_ros_preview_completed)
+        self.preview_worker.completed.connect(self.preview_thread.quit)
+        self.preview_thread.finished.connect(self._teardown_preview_worker)
+        self.preview_thread.start()
+
+    def _on_ros_preview_completed(self, sample, error: str) -> None:
+        self.load_frame_btn.setEnabled(True)
+        if error:
+            QMessageBox.warning(self, "ROS 2 source error", error)
+            self._log("ROS 2 initialization sample failed.")
+            return
+
+        if sample is None:
+            QMessageBox.warning(
+                self,
+                "No ROS 2 sample",
+                "No sample received from ROS 2.\n\n"
+                "Confirm that:\n"
+                "1. The ROS 2 publisher is running.\n"
+                "2. The Conda environment was activated before sourcing /opt/ros/humble/setup.bash.\n"
+                "3. The configured image, arm joint, and jaw topics are being published.\n"
+                "4. The topic QoS and synchronization slop are compatible.",
+            )
+            self._log("Timed out waiting for ROS 2 initialization sample.")
+            return
+
+        self._log("ROS 2 initialization sample received.")
+        self.statusBar().showMessage("ROS 2 initialization sample received.")
+        self._use_initialization_sample(sample)
+
+    def _teardown_preview_worker(self) -> None:
+        if self.preview_thread is not None:
+            self.preview_thread.deleteLater()
+        if self.preview_worker is not None:
+            self.preview_worker.deleteLater()
+        self.preview_thread = None
+        self.preview_worker = None
+
+    def _use_initialization_sample(self, sample) -> None:
         import cv2
 
         frame = cv2.cvtColor(sample.frame_bgr, cv2.COLOR_BGR2RGB)
@@ -623,6 +709,12 @@ class MainWindow(QMainWindow):
 
     def _shutdown_worker(self) -> None:
         """Gracefully stop worker/thread when closing the app."""
+        if self.preview_thread is not None:
+            self.preview_thread.quit()
+            self.preview_thread.wait()
+            self.preview_thread = None
+            self.preview_worker = None
+
         if self.worker is not None:
             self.worker.request_stop()
 

@@ -1,6 +1,5 @@
 from pathlib import Path
 from typing import List
-from urllib.parse import urlparse
 
 import yaml
 
@@ -19,27 +18,34 @@ def validate_config(config: LiveTrackingConfig) -> List[str]:
     errors: List[str] = []
     mode = config.input_mode.lower()
 
-    if mode not in {"offline", "mock_live", "ros2_bridge"}:
-        errors.append(f"Input mode must be one of offline, mock_live, ros2_bridge: {config.input_mode}")
+    if mode not in {"offline", "mock_live", "ros2"}:
+        errors.append(f"Input mode must be one of offline, mock_live, ros2: {config.input_mode}")
 
     if mode in {"offline", "mock_live"}:
         _validate_file(config.video_path, "Video", errors)
         _validate_file(config.joint_angles_path, "Joint angles yaml", errors)
-    elif mode == "ros2_bridge":
-        for label, endpoint in [
-            ("Bridge input endpoint", config.bridge_input_endpoint),
-            ("Bridge result endpoint", config.bridge_result_endpoint),
+    elif mode == "ros2":
+        for label, topic in [
+            ("ROS image topic", config.ros_image_topic),
+            ("ROS arm joint topic", config.ros_joint_topic),
+            ("ROS jaw topic", config.ros_jaw_topic),
+            ("ROS overlay topic", config.ros_overlay_topic),
+            ("ROS pose topic", config.ros_pose_topic),
+            ("ROS optimized joints topic", config.ros_optimized_joints_topic),
+            ("ROS loss topic", config.ros_loss_topic),
+            ("ROS fps topic", config.ros_fps_topic),
         ]:
-            parsed = urlparse(endpoint)
-            if parsed.scheme not in {"tcp", "ipc", "inproc"}:
-                errors.append(f"{label} must be a valid ZeroMQ endpoint: {endpoint}")
-            elif parsed.scheme == "tcp" and (not parsed.hostname or parsed.port is None):
-                errors.append(f"{label} must include TCP host and port: {endpoint}")
+            if not topic.strip():
+                errors.append(f"{label} must not be empty.")
+        if config.ros_sync_queue_size <= 0:
+            errors.append("ROS synchronization queue size must be positive.")
+        if config.ros_sync_slop_sec < 0:
+            errors.append("ROS synchronization slop must be nonnegative.")
 
     if config.mock_rate_hz <= 0:
         errors.append("Mock replay rate must be positive.")
-    if config.bridge_sample_timeout_sec <= 0:
-        errors.append("Bridge sample timeout must be positive.")
+    if config.sample_timeout_sec <= 0:
+        errors.append("Sample timeout must be positive.")
 
     _validate_file(config.camera_calibration_path, "Camera calibration", errors)
     _validate_file(config.handeye_path, "Hand-eye calibration", errors)

@@ -19,10 +19,10 @@ def make_common_files(tmp_path):
     return cam, handeye, lnd, weights, mesh_dir
 
 
-def test_bridge_mode_does_not_require_video_or_joint_yaml(tmp_path):
+def test_ros2_mode_does_not_require_video_or_joint_yaml(tmp_path):
     cam, handeye, lnd, weights, mesh_dir = make_common_files(tmp_path)
     cfg = LiveTrackingConfig(
-        input_mode="ros2_bridge",
+        input_mode="ros2",
         video_path=tmp_path / "missing.mp4",
         joint_angles_path=tmp_path / "missing.yaml",
         camera_calibration_path=cam,
@@ -53,21 +53,31 @@ def test_offline_mode_requires_video_and_joint_yaml(tmp_path):
     assert any("Joint angles yaml does not exist" in err for err in errors)
 
 
-def test_endpoint_and_rate_validation(tmp_path):
+def test_ros2_topic_and_rate_validation(tmp_path):
     cam, handeye, lnd, weights, mesh_dir = make_common_files(tmp_path)
     cfg = LiveTrackingConfig(
-        input_mode="ros2_bridge",
+        input_mode="ros2",
         camera_calibration_path=cam,
         handeye_path=handeye,
         lnd_json_path=lnd,
         contour_tip_net_path=weights,
         mesh_dir=mesh_dir,
-        bridge_input_endpoint="tcp://",
+        ros_image_topic="",
+        ros_sync_queue_size=0,
+        ros_sync_slop_sec=-1.0,
         mock_rate_hz=0,
-        bridge_sample_timeout_sec=0,
+        sample_timeout_sec=0,
     )
 
     errors = validate_config(cfg)
-    assert any("Bridge input endpoint" in err for err in errors)
+    assert any("ROS image topic" in err for err in errors)
+    assert any("queue size" in err for err in errors)
+    assert any("slop" in err for err in errors)
     assert any("Mock replay rate" in err for err in errors)
-    assert any("Bridge sample timeout" in err for err in errors)
+    assert any("Sample timeout" in err for err in errors)
+
+
+def test_bridge_endpoint_configuration_removed():
+    cfg = LiveTrackingConfig()
+
+    assert not any(name.startswith("bridge_") for name in vars(cfg))

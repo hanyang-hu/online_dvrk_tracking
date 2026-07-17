@@ -33,7 +33,7 @@ from diffcali.utils.skeleton_visualizer import SkeletonVisualizer
 from sam2.build_sam import build_sam2_camera_predictor
 
 from gui_live_tracking.config import LiveTrackingConfig
-from gui_live_tracking.bridge_transport import TrackingResult
+from gui_live_tracking.result_sink import TrackingResult
 from gui_live_tracking.source_factory import create_frame_source, create_result_sink
 
 
@@ -54,7 +54,7 @@ class TrackingWorker(QObject):
         self._pause_requested = False
         self._mutex = QMutex()
         self._pending_reinit_prompts: Optional[Tuple[List[Tuple[int, int]], List[int]]] = None
-        self._waiting_for_bridge = False
+        self._waiting_for_ros = False
 
         self._runtime_online_iters = config.online_iters
         self._runtime_use_lumped = config.use_lumped_error_init
@@ -390,18 +390,18 @@ class TrackingWorker(QObject):
                 if should_stop:
                     break
 
-                sample = source.get_sample(timeout_sec=cfg.bridge_sample_timeout_sec)
+                sample = source.get_sample(timeout_sec=cfg.sample_timeout_sec)
                 if sample is None:
-                    if cfg.input_mode == "ros2_bridge":
-                        if not self._waiting_for_bridge:
-                            self.status.emit("Waiting for ROS 2 bridge samples...")
-                            self._waiting_for_bridge = True
+                    if cfg.input_mode == "ros2":
+                        if not self._waiting_for_ros:
+                            self.status.emit("Waiting for ROS 2 samples...")
+                            self._waiting_for_ros = True
                         continue
                     break
 
-                if self._waiting_for_bridge:
-                    self.status.emit("ROS 2 bridge sample received.")
-                    self._waiting_for_bridge = False
+                if self._waiting_for_ros:
+                    self.status.emit("ROS 2 sample received.")
+                    self._waiting_for_ros = False
 
                 frame_idx = sample.source_index
                 frame = sample.frame_bgr.copy()
