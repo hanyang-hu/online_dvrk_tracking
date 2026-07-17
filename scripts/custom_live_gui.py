@@ -16,6 +16,7 @@ try:
         QApplication,
         QCheckBox,
         QComboBox,
+        QDoubleSpinBox,
         QFileDialog,
         QFormLayout,
         QGroupBox,
@@ -47,6 +48,7 @@ if str(REPO_ROOT / "SurgicalSAM2") not in sys.path:
 
 from gui_live_tracking.config import LiveTrackingConfig
 from gui_live_tracking.path_utils import validate_config
+from gui_live_tracking.source_factory import create_frame_source
 from gui_live_tracking.worker import TrackingWorker
 from sam2.build_sam import build_sam2_camera_predictor
 
@@ -124,14 +126,49 @@ class MainWindow(QMainWindow):
         self.handeye_path = QLineEdit()
         self.lnd_path = QLineEdit()
 
-        file_form.addRow("Video", self._path_row(self.video_path, is_video=True))
-        file_form.addRow("Joint angles yaml", self._path_row(self.joint_angles_path))
+        self.video_path_row = self._path_row(self.video_path, is_video=True)
+        self.joint_angles_path_row = self._path_row(self.joint_angles_path)
+        file_form.addRow("Video", self.video_path_row)
+        file_form.addRow("Joint angles yaml", self.joint_angles_path_row)
         file_form.addRow("Camera calibration yaml", self._path_row(self.cam_calib_path))
         file_form.addRow("Handeye yaml", self._path_row(self.handeye_path))
         file_form.addRow("LND json", self._path_row(self.lnd_path))
 
         settings_box = QGroupBox("Tracking Settings")
         settings_form = QFormLayout(settings_box)
+
+        input_box = QGroupBox("Input Source")
+        input_form = QFormLayout(input_box)
+
+        self.input_mode_combo = QComboBox()
+        self.input_mode_combo.addItem("Offline", "offline")
+        self.input_mode_combo.addItem("Mock live", "mock_live")
+        self.input_mode_combo.addItem("ROS 2 bridge", "ros2_bridge")
+
+        self.mock_rate_spin = QDoubleSpinBox()
+        self.mock_rate_spin.setRange(0.1, 240.0)
+        self.mock_rate_spin.setDecimals(1)
+        self.mock_rate_spin.setValue(30.0)
+        self.mock_loop_checkbox = QCheckBox("Loop")
+
+        self.bridge_input_endpoint = QLineEdit("tcp://127.0.0.1:5555")
+        self.bridge_result_endpoint = QLineEdit("tcp://127.0.0.1:5556")
+        self.bridge_timeout_spin = QDoubleSpinBox()
+        self.bridge_timeout_spin.setRange(0.05, 10.0)
+        self.bridge_timeout_spin.setDecimals(2)
+        self.bridge_timeout_spin.setValue(0.5)
+        self.ros_frame_id = QLineEdit("camera_left_optical_frame")
+        self.ros_child_frame_id = QLineEdit("PSM3_joint4_tracked")
+
+        self._input_mode_rows = []
+        input_form.addRow("Mode", self.input_mode_combo)
+        self._add_mode_row(input_form, "Replay rate", self.mock_rate_spin, {"mock_live"})
+        self._add_mode_row(input_form, "Loop", self.mock_loop_checkbox, {"mock_live"})
+        self._add_mode_row(input_form, "Input endpoint", self.bridge_input_endpoint, {"ros2_bridge"})
+        self._add_mode_row(input_form, "Result endpoint", self.bridge_result_endpoint, {"ros2_bridge"})
+        self._add_mode_row(input_form, "Sample timeout", self.bridge_timeout_spin, {"ros2_bridge"})
+        self._add_mode_row(input_form, "ROS frame ID", self.ros_frame_id, {"ros2_bridge"})
+        self._add_mode_row(input_form, "ROS child frame ID", self.ros_child_frame_id, {"ros2_bridge"})
 
         self.renderer_combo = QComboBox()
         self.renderer_combo.addItems(["nvdiffrast", "pytorch3d"])
@@ -169,7 +206,7 @@ class MainWindow(QMainWindow):
         prompt_layout.addWidget(QLabel("On video: Left click = FG, Right click = BG"))
 
         buttons_row = QHBoxLayout()
-        self.load_frame_btn = QPushButton("Load First Frame")
+        self.load_frame_btn = QPushButton("Load Initialization Frame")
         self.clear_prompts_btn = QPushButton("Clear Prompts")
         buttons_row.addWidget(self.load_frame_btn)
         buttons_row.addWidget(self.clear_prompts_btn)
@@ -193,8 +230,10 @@ class MainWindow(QMainWindow):
         self.status_text = QTextEdit()
         self.status_text.setReadOnly(True)
         self.status_text.setMinimumHeight(180)
+        self.status_text.document().setMaximumBlockCount(300)
 
         left_layout.addWidget(file_box)
+        left_layout.addWidget(input_box)
         left_layout.addWidget(settings_box)
         left_layout.addWidget(prompt_box)
         left_layout.addLayout(run_row)
@@ -222,6 +261,13 @@ class MainWindow(QMainWindow):
 
         self.iters_spin.valueChanged.connect(self._runtime_update)
         self.lumped_checkbox.stateChanged.connect(self._runtime_update)
+        self.input_mode_combo.currentIndexChanged.connect(self._update_mode_controls)
+        self._update_mode_controls()
+
+    def _add_mode_row(self, form: QFormLayout, label_text: str, widget: QWidget, modes: set[str]) -> None:
+        label = QLabel(label_text)
+        form.addRow(label, widget)
+        self._input_mode_rows.append((label, widget, modes))
 
     def _set_defaults(self) -> None:
         self.video_path.setText("data/custom/bag1/left.mp4")
@@ -254,6 +300,8 @@ class MainWindow(QMainWindow):
 
     def _log(self, text: str) -> None:
         self.status_text.append(text)
+        if text in {"Waiting for ROS 2 bridge samples...", "ROS 2 bridge sample received."}:
+            self.statusBar().showMessage(text)
 
     def _resolve_path(self, text: str) -> Path:
         p = Path(text)
@@ -269,6 +317,14 @@ class MainWindow(QMainWindow):
             handeye_path=self._resolve_path(self.handeye_path.text()),
             lnd_json_path=self._resolve_path(self.lnd_path.text()),
             machine_label="PSM3",
+            input_mode=self.input_mode_combo.currentData(),
+            mock_rate_hz=self.mock_rate_spin.value(),
+            mock_loop=self.mock_loop_checkbox.isChecked(),
+            bridge_input_endpoint=self.bridge_input_endpoint.text().strip(),
+            bridge_result_endpoint=self.bridge_result_endpoint.text().strip(),
+            bridge_sample_timeout_sec=self.bridge_timeout_spin.value(),
+            ros_frame_id=self.ros_frame_id.text().strip(),
+            ros_child_frame_id=self.ros_child_frame_id.text().strip(),
             renderer=self.renderer_combo.currentText(),
             searcher=self.optimizer_combo.currentText(),
             downscale_factor=int(self.downscale_combo.currentText()),
@@ -277,6 +333,18 @@ class MainWindow(QMainWindow):
             online_iters=self.iters_spin.value(),
             use_lumped_error_init=self.lumped_checkbox.isChecked(),
         )
+
+    def _update_mode_controls(self) -> None:
+        mode = self.input_mode_combo.currentData()
+        for label, widget, modes in self._input_mode_rows:
+            visible = mode in modes
+            label.setVisible(visible)
+            widget.setVisible(visible)
+            widget.setEnabled(visible)
+
+        file_inputs_enabled = mode in {"offline", "mock_live"}
+        self.video_path_row.setEnabled(file_inputs_enabled)
+        self.joint_angles_path_row.setEnabled(file_inputs_enabled)
 
     def _render_preview(self) -> None:
         if self.preview_base_rgb is None:
@@ -314,17 +382,35 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Invalid configuration", "\n".join(errors))
             return
 
-        import cv2
+        source = create_frame_source(cfg)
+        try:
+            source.start()
+            sample = source.get_sample(timeout_sec=5.0 if cfg.input_mode == "ros2_bridge" else cfg.bridge_sample_timeout_sec)
+        except Exception as exc:
+            QMessageBox.warning(self, "Source error", str(exc))
+            return
+        finally:
+            source.stop()
 
-        cap = cv2.VideoCapture(str(cfg.video_path))
-        ok, frame = cap.read()
-        cap.release()
-
-        if not ok:
-            QMessageBox.warning(self, "Video error", f"Could not read first frame from {cfg.video_path}")
+        if sample is None:
+            if cfg.input_mode == "ros2_bridge":
+                QMessageBox.warning(
+                    self,
+                    "No bridge sample",
+                    "No sample received from the ROS 2 bridge.\n\n"
+                    "Confirm that:\n"
+                    "1. The ROS 2 publisher is running.\n"
+                    "2. The ROS 2 bridge is running.\n"
+                    "3. The configured ZeroMQ endpoint matches the bridge.\n"
+                    "4. The image and joint topics are being published.",
+                )
+            else:
+                QMessageBox.warning(self, "Source error", "Could not read an initialization sample.")
             return
 
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        import cv2
+
+        frame = cv2.cvtColor(sample.frame_bgr, cv2.COLOR_BGR2RGB)
         self.preview_rgb = frame.copy()
         self.preview_base_rgb = frame.copy()
         self.prompt_points.clear()
@@ -340,7 +426,7 @@ class MainWindow(QMainWindow):
         self.init_predictor.load_first_frame(cv2.cvtColor(self.preview_base_rgb, cv2.COLOR_RGB2BGR))
 
         self._render_preview()
-        self._log("Loaded first frame. Add prompts with left/right click; mask updates live.")
+        self._log("Loaded initialization frame. Add prompts with left/right click; mask updates live.")
 
     def _clear_prompts(self) -> None:
         self.prompt_points.clear()
@@ -419,6 +505,7 @@ class MainWindow(QMainWindow):
         self.continue_btn.setEnabled(False)
         self.reinit_continue_btn.setEnabled(False)
         self.renderer_combo.setEnabled(False)
+        self.input_mode_combo.setEnabled(False)
 
         self.worker_thread.start()
         self._paused = False
@@ -522,6 +609,8 @@ class MainWindow(QMainWindow):
         self.continue_btn.setEnabled(False)
         self.reinit_continue_btn.setEnabled(False)
         self.renderer_combo.setEnabled(True)
+        self.input_mode_combo.setEnabled(True)
+        self._update_mode_controls()
         self._paused = False
         self._relabel_mode_active = False
 

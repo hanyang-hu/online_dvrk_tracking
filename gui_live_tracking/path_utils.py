@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import List
+from urllib.parse import urlparse
 
 import yaml
 
@@ -16,12 +17,33 @@ def _validate_file(path: Path, label: str, errors: List[str]) -> None:
 
 def validate_config(config: LiveTrackingConfig) -> List[str]:
     errors: List[str] = []
+    mode = config.input_mode.lower()
 
-    _validate_file(config.video_path, "Video", errors)
+    if mode not in {"offline", "mock_live", "ros2_bridge"}:
+        errors.append(f"Input mode must be one of offline, mock_live, ros2_bridge: {config.input_mode}")
+
+    if mode in {"offline", "mock_live"}:
+        _validate_file(config.video_path, "Video", errors)
+        _validate_file(config.joint_angles_path, "Joint angles yaml", errors)
+    elif mode == "ros2_bridge":
+        for label, endpoint in [
+            ("Bridge input endpoint", config.bridge_input_endpoint),
+            ("Bridge result endpoint", config.bridge_result_endpoint),
+        ]:
+            parsed = urlparse(endpoint)
+            if parsed.scheme not in {"tcp", "ipc", "inproc"}:
+                errors.append(f"{label} must be a valid ZeroMQ endpoint: {endpoint}")
+            elif parsed.scheme == "tcp" and (not parsed.hostname or parsed.port is None):
+                errors.append(f"{label} must include TCP host and port: {endpoint}")
+
+    if config.mock_rate_hz <= 0:
+        errors.append("Mock replay rate must be positive.")
+    if config.bridge_sample_timeout_sec <= 0:
+        errors.append("Bridge sample timeout must be positive.")
+
     _validate_file(config.camera_calibration_path, "Camera calibration", errors)
     _validate_file(config.handeye_path, "Hand-eye calibration", errors)
     _validate_file(config.lnd_json_path, "LND json", errors)
-    _validate_file(config.joint_angles_path, "Joint angles yaml", errors)
 
     if config.use_pts_loss:
         _validate_file(config.contour_tip_net_path, "ContourTipNet weights", errors)

@@ -33,6 +33,8 @@ from diffcali.utils.skeleton_visualizer import SkeletonVisualizer
 from sam2.build_sam import build_sam2_camera_predictor
 
 from gui_live_tracking.config import LiveTrackingConfig
+from gui_live_tracking.bridge_transport import TrackingResult
+from gui_live_tracking.source_factory import create_frame_source, create_result_sink
 
 
 class TrackingWorker(QObject):
@@ -52,6 +54,7 @@ class TrackingWorker(QObject):
         self._pause_requested = False
         self._mutex = QMutex()
         self._pending_reinit_prompts: Optional[Tuple[List[Tuple[int, int]], List[int]]] = None
+        self._waiting_for_bridge = False
 
         self._runtime_online_iters = config.online_iters
         self._runtime_use_lumped = config.use_lumped_error_init
@@ -197,6 +200,45 @@ class TrackingWorker(QObject):
         visible_joint_angles = torch.cat([visible_joint_angles, visible_joint_angles[-1].unsqueeze(0)], dim=0)
         return pose_vec, visible_joint_angles
 
+    def _visible_joint_angles_from_raw(self, raw_joint_angles: np.ndarray) -> torch.Tensor:
+        visible_joint_angles = torch.from_numpy(np.asarray(raw_joint_angles)).float().cuda()[-3:]
+        visible_joint_angles[-1] /= 2.0
+        return torch.cat([visible_joint_angles, visible_joint_angles[-1].unsqueeze(0)], dim=0)
+
+    def _rotation_matrix_to_quaternion_xyzw(self, rot: np.ndarray) -> List[float]:
+        trace = float(np.trace(rot))
+        if trace > 0.0:
+            s = np.sqrt(trace + 1.0) * 2.0
+            qw = 0.25 * s
+            qx = (rot[2, 1] - rot[1, 2]) / s
+            qy = (rot[0, 2] - rot[2, 0]) / s
+            qz = (rot[1, 0] - rot[0, 1]) / s
+        else:
+            diag = np.diag(rot)
+            if diag[0] > diag[1] and diag[0] > diag[2]:
+                s = np.sqrt(1.0 + rot[0, 0] - rot[1, 1] - rot[2, 2]) * 2.0
+                qw = (rot[2, 1] - rot[1, 2]) / s
+                qx = 0.25 * s
+                qy = (rot[0, 1] + rot[1, 0]) / s
+                qz = (rot[0, 2] + rot[2, 0]) / s
+            elif diag[1] > diag[2]:
+                s = np.sqrt(1.0 + rot[1, 1] - rot[0, 0] - rot[2, 2]) * 2.0
+                qw = (rot[0, 2] - rot[2, 0]) / s
+                qx = (rot[0, 1] + rot[1, 0]) / s
+                qy = 0.25 * s
+                qz = (rot[1, 2] + rot[2, 1]) / s
+            else:
+                s = np.sqrt(1.0 + rot[2, 2] - rot[0, 0] - rot[1, 1]) * 2.0
+                qw = (rot[1, 0] - rot[0, 1]) / s
+                qx = (rot[0, 2] + rot[2, 0]) / s
+                qy = (rot[1, 2] + rot[2, 1]) / s
+                qz = 0.25 * s
+        quat = np.array([qx, qy, qz, qw], dtype=np.float64)
+        norm = np.linalg.norm(quat)
+        if norm > 0:
+            quat /= norm
+        return quat.tolist()
+
     def _cTr_to_matrix(self, model: CtRNet, cTr: torch.Tensor) -> torch.Tensor:
         return model.cTr_to_pose_matrix(cTr.unsqueeze(0))[0]
 
@@ -312,17 +354,6 @@ class TrackingWorker(QObject):
             with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
                 return predictor.track(frame_bgr)
 
-        cap = cv2.VideoCapture(str(cfg.video_path))
-        with open(cfg.joint_angles_path, "r", encoding="utf-8") as f:
-            joint_angle_data = yaml.load(f, Loader=yaml.FullLoader)
-        joint_angles_lst = [joint_angle_data[f"{i}"] for i in range(len(joint_angle_data))]
-        joint_angles_np = np.array(joint_angles_lst)
-        self.status.emit(f"Loaded {len(joint_angles_lst)} joint angle entries from {cfg.joint_angles_path}")
-
-        joint_angles_tensor = torch.from_numpy(joint_angles_np).float().to(model.device)[:, -3:]
-        joint_angles_tensor[:, -1] /= 2.0
-        joint_angles_tensor = torch.cat([joint_angles_tensor, joint_angles_tensor[:, -1].unsqueeze(1)], dim=1)
-
         with open(cfg.handeye_path, "r", encoding="utf-8") as f:
             hand_eye_data = yaml.load(f, Loader=yaml.FullLoader)
 
@@ -346,187 +377,239 @@ class TrackingWorker(QObject):
         w_lumped = torch.eye(4, dtype=torch.float32, device=model.device)
         seg_time_lst: List[float] = []
         track_time_lst: List[float] = []
+        source = create_frame_source(cfg)
+        sink = create_result_sink(cfg)
 
-        frame_idx = 0
-        while frame_idx < len(joint_angles_np):
-            should_stop, _, runtime_iters, runtime_use_lumped = self._snapshot_runtime()
-            if should_stop:
-                break
+        try:
+            source.start()
+            sink.start()
+            self.status.emit(f"Using input mode: {cfg.input_mode}")
 
-            ret, frame = cap.read()
-            if not ret:
-                break
-
-            frame_shape_orig = (frame.shape[1], frame.shape[0])
-            frame = cv2.resize(frame, (ctrnet_args.width, ctrnet_args.height))
-            frame = (frame * args.dark_factor).astype(np.uint8)
-
-            if not init_done:
-                if len(self.prompt_points) == 0:
-                    raise RuntimeError("No prompt points provided. Add at least one FG prompt before starting.")
-
-                predictor.load_first_frame(frame)
-                pts_np = np.array(self.prompt_points, dtype=np.float32)
-                lbs_np = np.array(self.prompt_labels, dtype=np.int64)
-                out_mask_logits = self._extract_mask_logits(
-                    get_init_mask(frame_idx=0, obj_id=0, points=pts_np, labels=lbs_np)
-                )
-                mask = (out_mask_logits.squeeze() > 0).float()
-
-                cTr, joint_angles = self._initialization(cam_T_b=cam_T_b, joint_angles=joint_angles_np[0], psm_arm=psm_arm)
-                joint_angles = joint_angles_tensor[0].clone()
-
-                tracker = build_tracker(
-                    init_cTr=cTr,
-                    init_joint_angles=joint_angles,
-                    num_iters=runtime_iters,
-                )
-
-                cTr, joint_angles, loss = tracker.track_frame(
-                    ref_mask=mask,
-                    joint_angles=joint_angles_tensor[0],
-                    is_init=True,
-                    keypoints=None,
-                )
-
-                if runtime_use_lumped:
-                    cTr_A, _ = self._initialization(cam_T_b=cam_T_b, joint_angles=joint_angles_np[0], psm_arm=psm_arm)
-                    T_A = self._cTr_to_matrix(model, cTr_A)
-                    T_B = self._cTr_to_matrix(model, cTr)
-                    w_lumped = T_B @ torch.linalg.inv(T_A)
-
-                init_done = True
-            else:
-                torch.cuda.synchronize()
-                t0 = time.time()
-                out_mask_logits = self._extract_mask_logits(get_next_mask(frame))
-                torch.cuda.synchronize()
-                t1 = time.time()
-                seg_time_lst.append(t1 - t0)
-
-                mask = (out_mask_logits.squeeze() > 0).float()
-
-                torch.cuda.synchronize()
-                t2 = time.time()
-
-                cTr_fk, joint_angles_fk = self._initialization(
-                    cam_T_b=cam_T_b,
-                    joint_angles=joint_angles_np[frame_idx],
-                    psm_arm=psm_arm,
-                )
-
-                tracker.num_iters = runtime_iters
-                if runtime_use_lumped:
-                    T_A = self._cTr_to_matrix(model, cTr_fk)
-                    T_init = w_lumped @ T_A
-                    cTr_init_axis = self._matrix_to_cTr(model, T_init)
-                    cTr_init = self._axis_to_optimizer_rot(cTr_init_axis, args.use_mix_angle)
-                    cTr, joint_angles, loss = tracker.track_frame(
-                        ref_mask=mask,
-                        joint_angles=joint_angles_fk,
-                        is_init=False,
-                        keypoints=None,
-                        cTr_init=cTr_init,
-                    )
-                    T_B = self._cTr_to_matrix(model, cTr)
-                    w_lumped = T_B @ torch.linalg.inv(T_A)
-                else:
-                    cTr_init = self._axis_to_optimizer_rot(cTr_fk, args.use_mix_angle)
-                    cTr, joint_angles, loss = tracker.track_frame(
-                        ref_mask=mask,
-                        joint_angles=joint_angles_fk,
-                        is_init=False,
-                        keypoints=None,
-                        cTr_init=cTr_init,
-                    )
-
-                torch.cuda.synchronize()
-                t3 = time.time()
-                track_time_lst.append(t3 - t2)
-
-            mask_np = (out_mask_logits.squeeze() > 0).cpu().numpy().astype(np.uint8) * 255
-            color = cv2.applyColorMap(mask_np, cv2.COLORMAP_JET)
-            blended = cv2.addWeighted(frame, 0.7, color, 0.3, 0)
-            blended = skeleton_visualizer.plot_skeleton_overlay(blended, cTr, joint_angles)
-            blended = cv2.resize(blended, frame_shape_orig)
-
-            fps = 0.0
-            if len(seg_time_lst) > 5 and len(track_time_lst) > 5:
-                avg_time = sum(seg_time_lst[-5:]) / len(seg_time_lst[-5:]) + sum(track_time_lst[-5:]) / len(track_time_lst[-5:])
-                fps = 1.0 / avg_time if avg_time > 0 else 0.0
-
-            loss_val = float(loss.item()) if isinstance(loss, torch.Tensor) else float(loss)
-            cv2.putText(
-                blended,
-                f"Frame: {frame_idx} | Loss: {loss_val:.4f} | FPS: {fps:.2f}",
-                (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.9,
-                (255, 255, 255),
-                2,
-            )
-
-            rgb = cv2.cvtColor(blended, cv2.COLOR_BGR2RGB)
-            self.frame_ready.emit(rgb)
-            self.metrics.emit(fps, loss_val, frame_idx)
-
-            # Pause support: allow user to continue directly or re-initialize from the current frame.
-            should_stop, pause_requested, _, runtime_use_lumped_after = self._snapshot_runtime()
-            if should_stop:
-                break
-            if pause_requested:
-                paused_raw_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                reinit_prompts = self._wait_while_paused(paused_raw_rgb, frame_idx)
-                if reinit_prompts is None:
+            while True:
+                should_stop, _, runtime_iters, runtime_use_lumped = self._snapshot_runtime()
+                if should_stop:
                     break
 
-                if reinit_prompts[0] and np.sum(np.array(reinit_prompts[1]) == 1) > 0:
+                sample = source.get_sample(timeout_sec=cfg.bridge_sample_timeout_sec)
+                if sample is None:
+                    if cfg.input_mode == "ros2_bridge":
+                        if not self._waiting_for_bridge:
+                            self.status.emit("Waiting for ROS 2 bridge samples...")
+                            self._waiting_for_bridge = True
+                        continue
+                    break
+
+                if self._waiting_for_bridge:
+                    self.status.emit("ROS 2 bridge sample received.")
+                    self._waiting_for_bridge = False
+
+                frame_idx = sample.source_index
+                frame = sample.frame_bgr.copy()
+                raw_joint_angles = sample.raw_joint_angles.copy()
+                frame_shape_orig = (frame.shape[1], frame.shape[0])
+                frame = cv2.resize(frame, (ctrnet_args.width, ctrnet_args.height))
+                frame = (frame * args.dark_factor).astype(np.uint8)
+
+                if not init_done:
+                    if len(self.prompt_points) == 0:
+                        raise RuntimeError("No prompt points provided. Add at least one FG prompt before starting.")
+
                     predictor.load_first_frame(frame)
-                    pts_np = np.array(reinit_prompts[0], dtype=np.float32)
-                    lbs_np = np.array(reinit_prompts[1], dtype=np.int64)
+                    pts_np = np.array(self.prompt_points, dtype=np.float32)
+                    lbs_np = np.array(self.prompt_labels, dtype=np.int64)
                     out_mask_logits = self._extract_mask_logits(
                         get_init_mask(frame_idx=0, obj_id=0, points=pts_np, labels=lbs_np)
                     )
                     mask = (out_mask_logits.squeeze() > 0).float()
 
-                    cTr_reinit, joint_reinit = self._initialization(
-                        cam_T_b=cam_T_b,
-                        joint_angles=joint_angles_np[frame_idx],
-                        psm_arm=psm_arm,
-                    )
-                    joint_reinit = joint_angles_tensor[frame_idx].clone()
+                    cTr, joint_angles = self._initialization(cam_T_b=cam_T_b, joint_angles=raw_joint_angles, psm_arm=psm_arm)
+                    joint_angles = self._visible_joint_angles_from_raw(raw_joint_angles)
 
-                    # Re-initialize from scratch at the current frame: ignore previous optimization state.
                     tracker = build_tracker(
-                        init_cTr=cTr_reinit,
-                        init_joint_angles=joint_reinit,
+                        init_cTr=cTr,
+                        init_joint_angles=joint_angles,
                         num_iters=runtime_iters,
                     )
 
                     cTr, joint_angles, loss = tracker.track_frame(
                         ref_mask=mask,
-                        joint_angles=joint_reinit,
+                        joint_angles=joint_angles,
                         is_init=True,
                         keypoints=None,
-                        cTr_init=cTr_reinit,
                     )
 
-                    if runtime_use_lumped_after:
-                        T_A = self._cTr_to_matrix(model, cTr_reinit)
+                    if runtime_use_lumped:
+                        cTr_A, _ = self._initialization(cam_T_b=cam_T_b, joint_angles=raw_joint_angles, psm_arm=psm_arm)
+                        T_A = self._cTr_to_matrix(model, cTr_A)
                         T_B = self._cTr_to_matrix(model, cTr)
                         w_lumped = T_B @ torch.linalg.inv(T_A)
 
-                    mask_np = (out_mask_logits.squeeze() > 0).cpu().numpy().astype(np.uint8) * 255
-                    color = cv2.applyColorMap(mask_np, cv2.COLORMAP_JET)
-                    blended = cv2.addWeighted(frame, 0.7, color, 0.3, 0)
-                    blended = skeleton_visualizer.plot_skeleton_overlay(blended, cTr, joint_angles)
-                    blended = cv2.resize(blended, frame_shape_orig)
-                    rgb = cv2.cvtColor(blended, cv2.COLOR_BGR2RGB)
-                    self.frame_ready.emit(rgb)
-                    self.status.emit(f"Re-initialized at frame {frame_idx} with new prompts.")
+                    init_done = True
                 else:
-                    self.status.emit(f"Continuing from frame {frame_idx} without re-initialization.")
+                    torch.cuda.synchronize()
+                    t0 = time.time()
+                    out_mask_logits = self._extract_mask_logits(get_next_mask(frame))
+                    torch.cuda.synchronize()
+                    t1 = time.time()
+                    seg_time_lst.append(t1 - t0)
 
-            frame_idx += 1
+                    mask = (out_mask_logits.squeeze() > 0).float()
 
-        cap.release()
+                    torch.cuda.synchronize()
+                    t2 = time.time()
+
+                    cTr_fk, joint_angles_fk = self._initialization(
+                        cam_T_b=cam_T_b,
+                        joint_angles=raw_joint_angles,
+                        psm_arm=psm_arm,
+                    )
+
+                    tracker.num_iters = runtime_iters
+                    if runtime_use_lumped:
+                        T_A = self._cTr_to_matrix(model, cTr_fk)
+                        T_init = w_lumped @ T_A
+                        cTr_init_axis = self._matrix_to_cTr(model, T_init)
+                        cTr_init = self._axis_to_optimizer_rot(cTr_init_axis, args.use_mix_angle)
+                        cTr, joint_angles, loss = tracker.track_frame(
+                            ref_mask=mask,
+                            joint_angles=joint_angles_fk,
+                            is_init=False,
+                            keypoints=None,
+                            cTr_init=cTr_init,
+                        )
+                        T_B = self._cTr_to_matrix(model, cTr)
+                        w_lumped = T_B @ torch.linalg.inv(T_A)
+                    else:
+                        cTr_init = self._axis_to_optimizer_rot(cTr_fk, args.use_mix_angle)
+                        cTr, joint_angles, loss = tracker.track_frame(
+                            ref_mask=mask,
+                            joint_angles=joint_angles_fk,
+                            is_init=False,
+                            keypoints=None,
+                            cTr_init=cTr_init,
+                        )
+
+                    torch.cuda.synchronize()
+                    t3 = time.time()
+                    track_time_lst.append(t3 - t2)
+
+                mask_np = (out_mask_logits.squeeze() > 0).cpu().numpy().astype(np.uint8) * 255
+                color = cv2.applyColorMap(mask_np, cv2.COLORMAP_JET)
+                blended = cv2.addWeighted(frame, 0.7, color, 0.3, 0)
+                blended = skeleton_visualizer.plot_skeleton_overlay(blended, cTr, joint_angles)
+                blended = cv2.resize(blended, frame_shape_orig)
+
+                fps = 0.0
+                if len(seg_time_lst) > 5 and len(track_time_lst) > 5:
+                    avg_time = sum(seg_time_lst[-5:]) / len(seg_time_lst[-5:]) + sum(track_time_lst[-5:]) / len(track_time_lst[-5:])
+                    fps = 1.0 / avg_time if avg_time > 0 else 0.0
+
+                loss_val = float(loss.item()) if isinstance(loss, torch.Tensor) else float(loss)
+                cv2.putText(
+                    blended,
+                    f"Frame: {frame_idx} | Loss: {loss_val:.4f} | FPS: {fps:.2f}",
+                    (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.9,
+                    (255, 255, 255),
+                    2,
+                )
+
+                pose_matrix = self._cTr_to_matrix(model, cTr).detach().cpu().numpy()
+                result = TrackingResult(
+                    timestamp_ns=sample.timestamp_ns,
+                    source_index=sample.source_index,
+                    frame_id=cfg.ros_frame_id,
+                    child_frame_id=cfg.ros_child_frame_id,
+                    translation=pose_matrix[:3, 3].tolist(),
+                    quaternion_xyzw=self._rotation_matrix_to_quaternion_xyzw(pose_matrix[:3, :3]),
+                    optimized_joint_angles=joint_angles.detach().cpu().numpy().astype(float).tolist(),
+                    loss=loss_val,
+                    fps=fps,
+                    overlay_bgr=blended.copy(),
+                )
+                sink.send_result(result)
+
+                rgb = cv2.cvtColor(blended, cv2.COLOR_BGR2RGB)
+                self.frame_ready.emit(rgb)
+                self.metrics.emit(fps, loss_val, frame_idx)
+
+                # Pause support: allow user to continue directly or re-initialize from the current sample.
+                should_stop, pause_requested, _, runtime_use_lumped_after = self._snapshot_runtime()
+                if should_stop:
+                    break
+                if pause_requested:
+                    paused_sample = sample
+                    paused_frame = frame.copy()
+                    paused_raw_joints = paused_sample.raw_joint_angles.copy()
+                    paused_raw_rgb = cv2.cvtColor(paused_frame, cv2.COLOR_BGR2RGB)
+                    reinit_prompts = self._wait_while_paused(paused_raw_rgb, frame_idx)
+                    if reinit_prompts is None:
+                        break
+
+                    if reinit_prompts[0] and np.sum(np.array(reinit_prompts[1]) == 1) > 0:
+                        predictor.load_first_frame(paused_frame)
+                        pts_np = np.array(reinit_prompts[0], dtype=np.float32)
+                        lbs_np = np.array(reinit_prompts[1], dtype=np.int64)
+                        out_mask_logits = self._extract_mask_logits(
+                            get_init_mask(frame_idx=0, obj_id=0, points=pts_np, labels=lbs_np)
+                        )
+                        mask = (out_mask_logits.squeeze() > 0).float()
+
+                        cTr_reinit, _ = self._initialization(
+                            cam_T_b=cam_T_b,
+                            joint_angles=paused_raw_joints,
+                            psm_arm=psm_arm,
+                        )
+                        joint_reinit = self._visible_joint_angles_from_raw(paused_raw_joints)
+
+                        # Re-initialize from scratch at the paused sample: ignore previous optimization state.
+                        tracker = build_tracker(
+                            init_cTr=cTr_reinit,
+                            init_joint_angles=joint_reinit,
+                            num_iters=runtime_iters,
+                        )
+
+                        cTr, joint_angles, loss = tracker.track_frame(
+                            ref_mask=mask,
+                            joint_angles=joint_reinit,
+                            is_init=True,
+                            keypoints=None,
+                            cTr_init=cTr_reinit,
+                        )
+
+                        if runtime_use_lumped_after:
+                            T_A = self._cTr_to_matrix(model, cTr_reinit)
+                            T_B = self._cTr_to_matrix(model, cTr)
+                            w_lumped = T_B @ torch.linalg.inv(T_A)
+
+                        mask_np = (out_mask_logits.squeeze() > 0).cpu().numpy().astype(np.uint8) * 255
+                        color = cv2.applyColorMap(mask_np, cv2.COLORMAP_JET)
+                        reinit_blended = cv2.addWeighted(paused_frame, 0.7, color, 0.3, 0)
+                        reinit_blended = skeleton_visualizer.plot_skeleton_overlay(reinit_blended, cTr, joint_angles)
+                        reinit_blended = cv2.resize(reinit_blended, frame_shape_orig)
+                        reinit_loss_val = float(loss.item()) if isinstance(loss, torch.Tensor) else float(loss)
+                        reinit_pose_matrix = self._cTr_to_matrix(model, cTr).detach().cpu().numpy()
+                        sink.send_result(
+                            TrackingResult(
+                                timestamp_ns=paused_sample.timestamp_ns,
+                                source_index=paused_sample.source_index,
+                                frame_id=cfg.ros_frame_id,
+                                child_frame_id=cfg.ros_child_frame_id,
+                                translation=reinit_pose_matrix[:3, 3].tolist(),
+                                quaternion_xyzw=self._rotation_matrix_to_quaternion_xyzw(reinit_pose_matrix[:3, :3]),
+                                optimized_joint_angles=joint_angles.detach().cpu().numpy().astype(float).tolist(),
+                                loss=reinit_loss_val,
+                                fps=fps,
+                                overlay_bgr=reinit_blended.copy(),
+                            )
+                        )
+                        rgb = cv2.cvtColor(reinit_blended, cv2.COLOR_BGR2RGB)
+                        self.frame_ready.emit(rgb)
+                        self.metrics.emit(fps, reinit_loss_val, frame_idx)
+                        self.status.emit(f"Re-initialized at frame {frame_idx} with new prompts.")
+                    else:
+                        self.status.emit(f"Continuing from frame {frame_idx} without re-initialization.")
+        finally:
+            source.stop()
+            sink.stop()

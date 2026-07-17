@@ -4,12 +4,20 @@ from pathlib import Path
 
 @dataclass
 class LiveTrackingConfig:
-    video_path: Path
-    joint_angles_path: Path
-    camera_calibration_path: Path
-    handeye_path: Path
-    lnd_json_path: Path
+    video_path: Path = Path("data/custom/bag1/left.mp4")
+    joint_angles_path: Path = Path("data/custom/bag1/joint_angles.yaml")
+    camera_calibration_path: Path = Path("data/custom/camera_calibration.yaml")
+    handeye_path: Path = Path("data/custom/handeye.yaml")
+    lnd_json_path: Path = Path("data/custom/LND.json")
     machine_label: str = "PSM3"
+    input_mode: str = "offline"
+    mock_rate_hz: float = 30.0
+    mock_loop: bool = False
+    bridge_input_endpoint: str = "tcp://127.0.0.1:5555"
+    bridge_result_endpoint: str = "tcp://127.0.0.1:5556"
+    bridge_sample_timeout_sec: float = 0.5
+    ros_frame_id: str = "camera_left_optical_frame"
+    ros_child_frame_id: str = "PSM3_joint4_tracked"
     mesh_dir: Path = Path("urdfs/dVRK/meshes")
     contour_tip_net_path: Path = Path("ContourTipNet/models/cnn_model.pth")
     use_low_res_mesh: bool = True
