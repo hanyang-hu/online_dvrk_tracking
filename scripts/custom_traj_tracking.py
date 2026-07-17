@@ -8,6 +8,7 @@ import cv2
 import time
 import gc
 import yaml
+from typing import List, Tuple
 
 # ------------------ Path bootstrap ------------------
 SCRIPT_DIR = os.path.dirname(__file__)
@@ -44,6 +45,7 @@ from diffcali.utils.angle_transform_utils import (
     axis_angle_to_mix_angle,
 )
 from diffcali.utils.contour_tip_net import ContourTipNet
+from diffcali.utils.link_utils import axisAngleToRotationMatrix
 from diffcali.eval_dvrk.trackers import Tracker
 from TuRBO.turbo.turbo_1 import Turbo1
 from diffcali.eval_dvrk.black_box_optimize import BayesOptBatchProblem
@@ -115,6 +117,9 @@ def parseArgs():
     parser.add_argument("--online_iters", type=int, default=3)  # Number of iterations for online tracking
     
     parser.add_argument("--no_cache", action="store_true") # Use cached initialization
+
+    parser.add_argument('--use_lumped_error_init', type=str2bool, default=False) # Whether to initialize each frame using w * T_A (T_A from joint+base FK)
+    parser.add_argument('--interactive_prompts', type=str2bool, default=True) # Whether to interactively click SAM prompts on frame 0
 
     parser.add_argument("--use_full_joint_angles", action="store_true") # Whether to use all 7 joint angles for optimization, if false, only use the 3 visible joint angles and duplicate the jaw angle for the two jaws (since we are using symmetric jaw in tracking)
 
@@ -346,9 +351,124 @@ def initialization(cam_T_b, joint_angles, psm_arm):
 
     return pose_vec, visible_joint_angles
 
+
+def collect_interactive_prompts(frame: np.ndarray, predictor, get_init_mask) -> Tuple[np.ndarray, np.ndarray, torch.Tensor]:
+    """Collect SAM point prompts interactively on the first frame.
+
+    Controls:
+    - Left click: foreground point
+    - Right click: background point
+    - Enter: confirm prompts
+    - r: reset prompts
+    - q / Esc: abort
+    """
+    window_name = "Select SAM prompts (L=FG, R=BG, Enter=Start, r=Reset, q=Quit)"
+    points: List[List[float]] = []
+    labels: List[int] = []
+    out_mask_logits = None
+
+    base = frame.copy()
+    vis = frame.copy()
+
+    def draw(mask_logits=None):
+        nonlocal vis
+        vis = base.copy()
+
+        if mask_logits is not None:
+            mask = (mask_logits.squeeze() > 0).cpu().numpy().astype(np.uint8) * 255
+            color = cv2.applyColorMap(mask, cv2.COLORMAP_JET)
+            vis = cv2.addWeighted(vis, 0.7, color, 0.3, 0)
+
+        for (x, y), lb in zip(points, labels):
+            color = (0, 255, 0) if lb == 1 else (0, 0, 255)
+            cv2.circle(vis, (int(x), int(y)), 5, color, -1)
+
+        cv2.putText(vis, "Left click: FG | Right click: BG", (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 1)
+        cv2.putText(vis, "Enter: start tracking | r: reset | q/Esc: quit", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 1)
+
+    def update_mask():
+        nonlocal out_mask_logits
+        if len(points) == 0:
+            out_mask_logits = None
+            draw(None)
+            return
+
+        predictor.load_first_frame(base)
+        pts_np = np.array(points, dtype=np.float32)
+        lbs_np = np.array(labels, dtype=np.int64)
+        _, _, out_mask_logits = get_init_mask(
+            frame_idx=0,
+            obj_id=0,
+            points=pts_np,
+            labels=lbs_np,
+        )
+        draw(out_mask_logits)
+
+    def mouse_callback(event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN:
+            points.append([float(x), float(y)])
+            labels.append(1)
+            update_mask()
+        elif event == cv2.EVENT_RBUTTONDOWN:
+            points.append([float(x), float(y)])
+            labels.append(0)
+            update_mask()
+
+    predictor.load_first_frame(base)
+    draw(None)
+
+    cv2.namedWindow(window_name)
+    cv2.setMouseCallback(window_name, mouse_callback)
+
+    while True:
+        cv2.imshow(window_name, vis)
+        key = cv2.waitKey(20) & 0xFF
+        if key in (13, 10):  # Enter
+            if np.sum(np.array(labels) == 1) == 0:
+                print("Please add at least one foreground point before starting.")
+                continue
+            break
+        if key == ord('r'):
+            points.clear()
+            labels.clear()
+            predictor.load_first_frame(base)
+            out_mask_logits = None
+            draw(None)
+        if key in (ord('q'), 27):  # q or Esc
+            cv2.destroyWindow(window_name)
+            raise RuntimeError("Interactive prompt selection aborted by user.")
+
+    cv2.destroyWindow(window_name)
+
+    if out_mask_logits is None:
+        update_mask()
+
+    return np.array(points, dtype=np.float32), np.array(labels, dtype=np.int64), out_mask_logits
+
+
+def cTr_to_matrix(model: CtRNet, cTr: torch.Tensor) -> torch.Tensor:
+    return model.cTr_to_pose_matrix(cTr.unsqueeze(0))[0]
+
+
+def matrix_to_cTr(model: CtRNet, pose_matrix: torch.Tensor) -> torch.Tensor:
+    return model.pose_matrix_to_cTr(pose_matrix.unsqueeze(0))[0]
+
+
+def axis_to_optimizer_rot(cTr_axis: torch.Tensor, use_mix_angle: bool) -> torch.Tensor:
+    """Convert axis-angle cTr to the optimizer rotation parameterization if needed."""
+    cTr_opt = cTr_axis.clone()
+    if use_mix_angle:
+        cTr_opt[:3] = axis_angle_to_mix_angle(cTr_axis[:3].unsqueeze(0)).squeeze(0)
+    return cTr_opt
+
 if __name__ == "__main__":
     args = parseArgs()
     ctrnet_args = parseCtRNetArgs()
+
+    if args.use_lumped_error_init:
+        args.use_full_joint_angles = True
+        args.no_cache = True
+        print("Using lumped-error initialization: forcing --use_full_joint_angles True and disabling cache.")
 
     # Load rendering model
     ctrnet_args.use_nvdiffrast = args.use_nvdiffrast
@@ -419,28 +539,11 @@ if __name__ == "__main__":
     def get_next_mask(*a, **k):
         return predictor.track(*a, **k)
 
-    # Load initial point prompts and keypoints (two tips)
-    init_pts = []
-    init_lbs = []
-    with open(args.point_prompt_path, "r") as f:
-        for line in f:
-            x, y, label = line.strip().split()
-            init_pts.append([float(x), float(y)])
-            init_lbs.append(int(label))
-    init_pts = np.array(init_pts, dtype=np.float32)
-    init_lbs = np.array([1 if lb == 1 else 0 for lb in init_lbs], dtype=np.int64) # Ensure labels are binary (1 for foreground, 0 for background)
-
     # print(args.video_path)
     cap = cv2.VideoCapture(args.video_path)
 
-    # ---- Real-time faithful recording setup ----
-    save_video = True
-    out_fps = 30.0  # common, compatible constant FPS for saved file
-    if not os.path.exists("./videos/"):
-        os.makedirs("./videos/")
-    out_path = os.path.join(f"./videos/cma_es_{args.video_label}_realtime_demo.mp4")
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-
+    # ---- Live display only (no file outputs) ----
+    save_video = False
     rt_writer = None
 
     bag_dir = f'data/custom/{args.video_label}'
@@ -464,8 +567,16 @@ if __name__ == "__main__":
     hand_eye_data = yaml.load(f, Loader=yaml.FullLoader)
 
     cam_T_b = np.eye(4)
-    cam_T_b[:-1, -1] = np.array(hand_eye_data['PSM1_tvec'])/1000.0
-    cam_T_b[:-1, :-1] = axisAngleToRotationMatrix(hand_eye_data['PSM1_rvec'])
+    tvec_key = f"{args.machine_label}_tvec"
+    rvec_key = f"{args.machine_label}_rvec"
+    if tvec_key in hand_eye_data and rvec_key in hand_eye_data:
+        cam_T_b[:-1, -1] = np.array(hand_eye_data[tvec_key]) / 1000.0
+        cam_T_b[:-1, :-1] = axisAngleToRotationMatrix(hand_eye_data[rvec_key])
+        print(f"Using hand-eye calibration for {args.machine_label}.")
+    else:
+        cam_T_b[:-1, -1] = np.array(hand_eye_data['PSM1_tvec']) / 1000.0
+        cam_T_b[:-1, :-1] = axisAngleToRotationMatrix(hand_eye_data['PSM1_rvec'])
+        print(f"[Warning] Missing {args.machine_label} hand-eye in handeye.yaml. Falling back to PSM1 hand-eye.")
     psm_arm = RobotLink(os.path.join("./data/custom/", "LND.json"))
 
     init_done = False
@@ -473,6 +584,7 @@ if __name__ == "__main__":
     track_time_lst = []
     cTr_lst = []
     joint_lst = []
+    w_lumped = torch.eye(4, dtype=torch.float32, device=model.device)
 
     for frame_idx in range(len(joint_angles_np)):
         ret, frame = cap.read()
@@ -484,6 +596,9 @@ if __name__ == "__main__":
         frame = cv2.resize(frame, (ctrnet_args.width, ctrnet_args.height))
 
         if save_video and rt_writer is None:
+            out_fps = 30.0
+            out_path = os.path.join(f"./videos/cma_es_{args.video_label}_realtime_demo.mp4")
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
             rt_writer = RealTimeVideoWriter(
                 path=out_path,
                 fourcc=fourcc,
@@ -495,60 +610,55 @@ if __name__ == "__main__":
         frame = (frame * args.dark_factor).astype(np.uint8)
 
         if not init_done:
-            predictor.load_first_frame(frame)
+            if args.interactive_prompts:
+                _, _, out_mask_logits = collect_interactive_prompts(frame, predictor, get_init_mask)
+            else:
+                init_pts = []
+                init_lbs = []
+                with open(args.point_prompt_path, "r") as f:
+                    for line in f:
+                        x, y, label = line.strip().split()
+                        init_pts.append([float(x), float(y)])
+                        init_lbs.append(int(label))
+                init_pts = np.array(init_pts, dtype=np.float32)
+                init_lbs = np.array([1 if lb == 1 else 0 for lb in init_lbs], dtype=np.int64)
 
-            _, _, out_mask_logits = get_init_mask(
-                frame_idx=0,
-                obj_id=0,
-                points=init_pts,
-                labels=init_lbs,
-            )
+                predictor.load_first_frame(frame)
+                _, _, out_mask_logits = get_init_mask(
+                    frame_idx=0,
+                    obj_id=0,
+                    points=init_pts,
+                    labels=init_lbs,
+                )
 
             mask = (out_mask_logits.squeeze() > 0).float()
 
-            cache_filename = f"./data/custom/{args.video_label}/{args.machine_label}_init_cache.pth"
-
             kpts = np.loadtxt(args.keypoints_path) if os.path.exists(args.keypoints_path) else None
 
-            if args.no_cache or not os.path.exists(cache_filename):
-                print("[Not using cache or the cache file is not found, running optimization-based initialization...]")
-                assert kpts is not None, "Keypoint prompts are required for optimization-based initialization. Please provide the keypoints in the specified path."
+            print("[Running initialization without cache...]")
+            assert kpts is not None, "Keypoint prompts are required for optimization-based initialization. Please provide the keypoints in the specified path."
 
-                cTr, joint_angles = initialization(
-                    cam_T_b=cam_T_b, # We can set the initial camera-to-base transformation to identity since the optimization will search over the full pose space
-                    joint_angles=joint_angles_np[0], # Use the joint angle readings for initialization (but with a large search range in optimization to account for potential inaccuracies in the readings)
-                    psm_arm=psm_arm
-                )
+            cTr, joint_angles = initialization(
+                cam_T_b=cam_T_b,
+                joint_angles=joint_angles_np[0],
+                psm_arm=psm_arm
+            )
 
-                # cTr, joint_angles = initialization(
-                #     model, mask, kpts, None, mesh_files
-                # )  
+            # If using joint angle readings, replace the initial joint angles and fix potential left/right ambiguity.
+            if not args.use_prev_joint_angles:
+                joint_angles_input = joint_angles_tensor[frame_idx].clone()
 
-                # After initialization, if using joint angle readings, replace the initial joint angles
-                # If the joint angle reading is flipped, rotate around beta by 180 degrees to resolve ambiguity
-                if not args.use_prev_joint_angles:
-                    joint_angles_input = joint_angles_tensor[frame_idx].clone()
+                wrist_pitch_yaw = joint_angles[:2]
+                flipped_wrist_pitch_yaw = -joint_angles[:2]
 
-                    # Check if wrist pitch and wrist yaw (first two joints) are flipped around 0
-                    wrist_pitch_yaw = joint_angles[:2]
-                    flipped_wrist_pitch_yaw = -joint_angles[:2]
+                if torch.norm(wrist_pitch_yaw - joint_angles_input[:2]) > torch.norm(flipped_wrist_pitch_yaw - joint_angles_input[:2]):
+                    print("Flipping wrist pitch and yaw for left arm to resolve ambiguity.")
+                    joint_angles_input[:2] = flipped_wrist_pitch_yaw
+                    cTr[:3] = axis_angle_to_mix_angle(cTr[:3].unsqueeze(0)).squeeze(0)
+                    cTr[1] += np.pi
+                    cTr[:3] = mix_angle_to_axis_angle(cTr[:3].unsqueeze(0)).squeeze(0)
 
-                    if torch.norm(wrist_pitch_yaw - joint_angles_input[:2]) > torch.norm(flipped_wrist_pitch_yaw - joint_angles_input[:2]):
-                        print("Flipping wrist pitch and yaw for left arm to resolve ambiguity.")
-                        joint_angles_input[:2] = flipped_wrist_pitch_yaw    
-                        cTr[:3] = axis_angle_to_mix_angle(cTr[:3].unsqueeze(0)).squeeze(0) # convert to mix angle representation for flipping
-                        cTr[1] += np.pi  # rotate around beta by 180 degrees
-                        cTr[:3] = mix_angle_to_axis_angle(cTr[:3].unsqueeze(0)).squeeze(0) # convert back to axis angle representation
-
-                    joint_angles = joint_angles_input.clone()
-
-                torch.save({'cTr': cTr, 'joint_angles': joint_angles}, cache_filename)
-                print(f"[The cTr and joint angles are saved in {cache_filename}.]")
-            else:
-                print(f"[Found cache file at {cache_filename}.]")
-                cache = torch.load(cache_filename)
-                cTr = cache['cTr'].to(model.device)
-                joint_angles = cache['joint_angles'].to(model.device)
+                joint_angles = joint_angles_input.clone()
 
             tracker = Tracker(
                 model=model,
@@ -564,7 +674,22 @@ if __name__ == "__main__":
                 args=args,
             )
 
-            cTr, joint_angles, loss = tracker.track_frame(ref_mask=mask, joint_angles=joint_angles_tensor[frame_idx], is_init=True, keypoints=torch.from_numpy(kpts).to(model.device).float() if kpts is not None else None)
+            cTr, joint_angles, loss = tracker.track_frame(
+                ref_mask=mask,
+                joint_angles=joint_angles_tensor[frame_idx],
+                is_init=True,
+                keypoints=torch.from_numpy(kpts).to(model.device).float() if kpts is not None else None,
+            )
+
+            if args.use_lumped_error_init:
+                cTr_A, _ = initialization(
+                    cam_T_b=cam_T_b,
+                    joint_angles=joint_angles_np[frame_idx],
+                    psm_arm=psm_arm,
+                )
+                T_A = cTr_to_matrix(model, cTr_A)
+                T_B = cTr_to_matrix(model, cTr)
+                w_lumped = T_B @ torch.linalg.inv(T_A)
 
             cTr_lst.append(cTr)
             joint_lst.append(joint_angles)
@@ -592,12 +717,35 @@ if __name__ == "__main__":
             start_time = time.time()
 
             if args.use_full_joint_angles:
-                cTr, joint_angles = initialization(
+                cTr_fk, joint_angles_fk = initialization(
                     cam_T_b=cam_T_b, 
                     joint_angles=joint_angles_np[frame_idx],
                     psm_arm=psm_arm
                 )
-                cTr, joint_angles, loss = tracker.track_frame(ref_mask=mask, joint_angles=joint_angles, is_init=False, keypoints=None, cTr_init=cTr)
+
+                if args.use_lumped_error_init:
+                    T_A = cTr_to_matrix(model, cTr_fk)
+                    T_init = w_lumped @ T_A
+                    cTr_init_axis = matrix_to_cTr(model, T_init)
+                    cTr_init = axis_to_optimizer_rot(cTr_init_axis, args.use_mix_angle)
+                    cTr, joint_angles, loss = tracker.track_frame(
+                        ref_mask=mask,
+                        joint_angles=joint_angles_fk,
+                        is_init=False,
+                        keypoints=None,
+                        cTr_init=cTr_init,
+                    )
+                    T_B = cTr_to_matrix(model, cTr)
+                    w_lumped = T_B @ torch.linalg.inv(T_A)
+                else:
+                    cTr_init = axis_to_optimizer_rot(cTr_fk, args.use_mix_angle)
+                    cTr, joint_angles, loss = tracker.track_frame(
+                        ref_mask=mask,
+                        joint_angles=joint_angles_fk,
+                        is_init=False,
+                        keypoints=None,
+                        cTr_init=cTr_init,
+                    )
             else:
                 cTr, joint_angles, loss = tracker.track_frame(ref_mask=mask, joint_angles=joint_angles_tensor[frame_idx], is_init=False, keypoints=None)
             torch.cuda.synchronize()
@@ -667,12 +815,4 @@ if __name__ == "__main__":
     else:
         print("Not enough frames to compute average FPS excluding initialization.")
 
-    # Save the tracked cTr and joint angles for all frames
-    target_dir = "./pf_tracking_results/"
-    os.makedirs(target_dir, exist_ok=True)
-    pose_tensor = torch.stack(cTr_lst, dim=0).cpu()  # shape (num_frames, 6)
-    joint_tensor = torch.stack(joint_lst, dim=0).cpu()  # shape (num_frames, num_joints)
-    seg_time_tensor = torch.tensor(seg_time_lst).cpu()  # shape (num_frames-1,)
-    track_time_tensor = torch.tensor(track_time_lst).cpu()  # shape (num_frames-1,)
-    time_tensor = seg_time_tensor + track_time_tensor  # shape (num_frames-1,)
-    torch.save({"cTr": pose_tensor, "joint_angles": joint_tensor, "time": time_tensor}, os.path.join(target_dir, f"cma_es_{args.video_label}_tracking_results.pt"))
+    print("Live tracking finished. No tracking results were saved to disk.")

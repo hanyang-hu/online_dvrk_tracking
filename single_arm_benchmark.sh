@@ -13,10 +13,10 @@ COMMON_ARGS="--rotation_parameterization MixAngle \
 --sample_number 2000 \
 --final_iters 100"
 
-REAL_BAGS=({0..7} {30..33})
-SYN_BAGS=({0..15})
+# REAL_BAGS=({0..7} {30..33})
+# SYN_BAGS=({0..15})
 # REAL_BAGS=({0..0})
-# SYN_BAGS=({0..0})
+SYN_BAGS=({0..0})
 ARMS=("PSM1" "PSM3")
 
 # run_variant () {
@@ -154,38 +154,38 @@ ONLINE_GD_20=$3
 ONLINE_ES_3=$4
 ONLINE_ES_5=$5
 
-# -------- GD (NvDiffRast) ----------
-run_variant Gradient nvdiffrast False True Learned $ONLINE_GD_10 $DATA_DIR $BAG
-run_variant Gradient nvdiffrast True True Learned $ONLINE_GD_10 $DATA_DIR $BAG
-run_variant Gradient nvdiffrast False True Learned $ONLINE_GD_20 $DATA_DIR $BAG
+# # -------- GD (NvDiffRast) ----------
+# run_variant Gradient nvdiffrast False True Learned $ONLINE_GD_10 $DATA_DIR $BAG
+# run_variant Gradient nvdiffrast True True Learned $ONLINE_GD_10 $DATA_DIR $BAG
+# run_variant Gradient nvdiffrast False True Learned $ONLINE_GD_20 $DATA_DIR $BAG
 
-# -------- GD (PyTorch3D) ----------
-run_variant Gradient pytorch3d False True Learned $ONLINE_GD_10 $DATA_DIR $BAG
+# # -------- GD (PyTorch3D) ----------
+# run_variant Gradient pytorch3d False True Learned $ONLINE_GD_10 $DATA_DIR $BAG
 
-# -------- XNES ----------
-run_variant XNES nvdiffrast False True Learned $ONLINE_ES_3 $DATA_DIR $BAG
+# # -------- XNES ----------
+# run_variant XNES nvdiffrast False True Learned $ONLINE_ES_3 $DATA_DIR $BAG
 
 # -------- CMA-ES ----------
-run_variant CMA-ES nvdiffrast False True Learned $ONLINE_ES_3 $DATA_DIR $BAG
-run_variant CMA-ES nvdiffrast True  True Learned 1 $DATA_DIR $BAG
+# run_variant CMA-ES nvdiffrast False True Learned $ONLINE_ES_3 $DATA_DIR $BAG
+# run_variant CMA-ES nvdiffrast True  True Learned 1 $DATA_DIR $BAG
 run_variant CMA-ES nvdiffrast True  True Learned $ONLINE_ES_3 $DATA_DIR $BAG
-run_variant CMA-ES nvdiffrast False False Learned $ONLINE_ES_3 $DATA_DIR $BAG
-run_variant CMA-ES nvdiffrast False True None     $ONLINE_ES_3 $DATA_DIR $BAG
-run_variant CMA-ES nvdiffrast False True OpenCV   $ONLINE_ES_3 $DATA_DIR $BAG
-run_variant CMA-ES nvdiffrast False True Learned  $ONLINE_ES_3 $DATA_DIR $BAG
-run_variant CMA-ES nvdiffrast False True Learned  $ONLINE_ES_5 $DATA_DIR $BAG
+# run_variant CMA-ES nvdiffrast False False Learned $ONLINE_ES_3 $DATA_DIR $BAG
+# run_variant CMA-ES nvdiffrast False True None     $ONLINE_ES_3 $DATA_DIR $BAG
+# run_variant CMA-ES nvdiffrast False True OpenCV   $ONLINE_ES_3 $DATA_DIR $BAG
+# run_variant CMA-ES nvdiffrast False True Learned  $ONLINE_ES_3 $DATA_DIR $BAG
+# run_variant CMA-ES nvdiffrast False True Learned  $ONLINE_ES_5 $DATA_DIR $BAG
 }
 
 # ==========================================================
 # LOOP DATASETS
 # ==========================================================
 
-for BAG_ID in ${REAL_BAGS[@]}; do
-for ARM in ${ARMS[@]}; do
-    BAG="$(printf '%06d' $BAG_ID)/$ARM"
-    run_all_single_arm surgpose 10 20 3 5
-done
-done
+# for BAG_ID in ${REAL_BAGS[@]}; do
+# for ARM in ${ARMS[@]}; do
+#     BAG="$(printf '%06d' $BAG_ID)/$ARM"
+#     run_all_single_arm surgpose 10 20 3 5
+# done
+# done
 
 for BAG_ID in ${SYN_BAGS[@]}; do
 for ARM in ${ARMS[@]}; do
