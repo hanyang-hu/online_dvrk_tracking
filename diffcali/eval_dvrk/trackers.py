@@ -80,6 +80,50 @@ def keypoint_loss_batch(keypoints_a, keypoints_b, p=1, sqrt=False, thres=10.):
     return min_dist + centerline_loss if not sqrt else torch.sqrt(min_dist + centerline_loss)
 
 
+def _tensor_summary(name, value):
+    if value is None:
+        return f"{name}=None"
+    if not torch.is_tensor(value):
+        return f"{name}=type({type(value).__name__})"
+    with torch.no_grad():
+        finite = torch.isfinite(value)
+        finite_count = int(finite.sum().item())
+        total_count = value.numel()
+        if finite_count:
+            finite_values = value[finite]
+            min_val = float(finite_values.min().item())
+            max_val = float(finite_values.max().item())
+            return (
+                f"{name}: shape={tuple(value.shape)}, "
+                f"finite={finite_count}/{total_count}, "
+                f"min={min_val:.6g}, max={max_val:.6g}"
+            )
+        return f"{name}: shape={tuple(value.shape)}, finite=0/{total_count}"
+
+
+def _require_best_solution(logger, problem, ref_mask, joint_angles, center_init, phase):
+    if logger.best_solution is not None:
+        return logger.best_solution
+
+    details = [
+        f"phase={phase}",
+        f"searcher_best_eval={logger.best_eval}",
+        _tensor_summary("ref_mask", ref_mask),
+        _tensor_summary("joint_angles", joint_angles),
+        _tensor_summary("center_init", center_init),
+        _tensor_summary("lengthscales", problem.lengthscales),
+    ]
+    raise RuntimeError(
+        "Tracker optimizer did not produce a best solution. "
+        "This is the guarded cause of the previous "
+        "`best_solution * self.problem.lengthscales` NoneType error. "
+        "In ROS 2 mode this usually means the first synchronized image, prompt mask, "
+        "joint positions, camera intrinsics, or hand-eye/FK pose made every optimizer "
+        "candidate invalid or non-finite. "
+        + "; ".join(details)
+    )
+
+
 class DummyLogger(Logger):
     """
     A dummy logger that only maintains the best solution during the optimization.
@@ -101,7 +145,7 @@ class DummyLogger(Logger):
     def __call__(self, status: dict):
         # Update best value and evaluation
         try:
-            if status["pop_best_eval"] < self.best_eval:
+            if self.best_solution is None or status["pop_best_eval"] < self.best_eval:
                 self.best_solution = status["pop_best"].values.clone()
                 self.best_eval = status["pop_best_eval"]
                 # print(f"New best solution found: {self.best_solution}, evaluation: {self.best_eval}")
@@ -1173,7 +1217,14 @@ class Tracker:
 
         with torch.no_grad():
             # Extract the best solution and evaluation from the logger
-            best_solution = logger.best_solution
+            best_solution = _require_best_solution(
+                logger,
+                self.problem,
+                ref_mask,
+                joint_angles,
+                center_init,
+                "track_frame_init" if is_init else "track_frame",
+            )
 
             best_solution = best_solution * self.problem.lengthscales
 
@@ -1357,7 +1408,14 @@ class Tracker:
             
             with torch.no_grad():
                 # Extract the best solution and evaluation from the logger
-                best_solution = logger.best_solution
+                best_solution = _require_best_solution(
+                    logger,
+                    self.problem,
+                    ref_mask,
+                    joint_angles,
+                    center_init,
+                    "track_sequence_init" if init_flag else "track_sequence",
+                )
 
                 best_solution = best_solution * self.problem.lengthscales
 

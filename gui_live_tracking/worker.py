@@ -57,6 +57,7 @@ class TrackingWorker(QObject):
         self._mutex = QMutex()
         self._pending_reinit_prompts: Optional[Tuple[List[Tuple[int, int]], List[int]]] = None
         self._waiting_for_ros = False
+        self._logged_ros_sample_details = False
 
         self._runtime_online_iters = config.online_iters
         self._runtime_use_lumped = config.use_lumped_error_init
@@ -507,6 +508,15 @@ class TrackingWorker(QObject):
                 frame_idx = sample.source_index
                 frame = sample.frame_bgr.copy()
                 raw_joint_angles = sample.raw_joint_angles.copy()
+                if cfg.input_mode == "ros2" and not self._logged_ros_sample_details:
+                    self.status.emit(
+                        "ROS 2 first sample: "
+                        f"frame={frame_idx}, image_shape={frame.shape}, "
+                        f"image_dtype={frame.dtype}, joint_count={raw_joint_angles.size}, "
+                        f"timestamp_ns={sample.timestamp_ns}, "
+                        f"joints={np.round(raw_joint_angles, 5).tolist()}"
+                    )
+                    self._logged_ros_sample_details = True
                 frame_shape_orig = (frame.shape[1], frame.shape[0])
                 frame = cv2.resize(frame, (ctrnet_args.width, ctrnet_args.height))
                 frame = (frame * args.dark_factor).astype(np.uint8)
@@ -522,6 +532,11 @@ class TrackingWorker(QObject):
                         get_init_mask(frame_idx=0, obj_id=0, points=pts_np, labels=lbs_np)
                     )
                     mask = (out_mask_logits.squeeze() > 0).float()
+                    if cfg.input_mode == "ros2":
+                        self.status.emit(
+                            "ROS 2 initialization mask: "
+                            f"shape={tuple(mask.shape)}, foreground_pixels={int(mask.sum().item())}"
+                        )
 
                     if cfg.use_turbo_handeye_init:
                         self.status.emit(
