@@ -12,7 +12,7 @@ def make_common_files(tmp_path):
     mesh_dir = tmp_path / "meshes"
     cam.write_text("fx: 1\nfy: 1\npx: 0\npy: 0\n", encoding="utf-8")
     with open(handeye, "w", encoding="utf-8") as f:
-        yaml.safe_dump({"PSM3_tvec": [0, 0, 0], "PSM3_rvec": [0, 0, 0]}, f)
+        yaml.safe_dump({"PSM1_tvec": [0, 0, 0], "PSM1_rvec": [0, 0, 0]}, f)
     lnd.write_text("{}", encoding="utf-8")
     weights.write_text("x", encoding="utf-8")
     mesh_dir.mkdir()

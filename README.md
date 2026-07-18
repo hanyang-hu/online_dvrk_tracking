@@ -247,9 +247,9 @@ Verify topics with:
 
 ```bash
 ros2 topic list
-ros2 topic hz --qos-profile sensor_data /stereo/left/image
-ros2 topic echo --once --qos-profile sensor_data /dvrk/PSM3/state_joint_current
-ros2 topic echo --once --qos-profile sensor_data /dvrk/PSM3/state_jaw_current
+ros2 topic hz --qos-profile sensor_data /stereo/left/rectified_downscaled_image
+ros2 topic echo --once --qos-profile sensor_data /PSM1/measured_js
+ros2 topic echo --once --qos-profile sensor_data /PSM1/jaw/measured_js
 ```
 
 To receive one synchronized sample without starting the GUI:
@@ -307,9 +307,9 @@ Click **Re-init** while paused to clear prompts, relabel the paused frame, and c
 Default input topics:
 
 ```text
-/stereo/left/image
-/dvrk/PSM3/state_joint_current
-/dvrk/PSM3/state_jaw_current
+/stereo/left/rectified_downscaled_image
+/PSM1/measured_js
+/PSM1/jaw/measured_js
 ```
 
 The GUI synchronizes these topics with `message_filters.ApproximateTimeSynchronizer`, converts the image to `bgr8`, concatenates arm and jaw joint positions, and stores only the latest synchronized sample.

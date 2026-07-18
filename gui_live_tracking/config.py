@@ -9,14 +9,14 @@ class LiveTrackingConfig:
     camera_calibration_path: Path = Path("data/custom/camera_calibration.yaml")
     handeye_path: Path = Path("data/custom/handeye.yaml")
     lnd_json_path: Path = Path("data/custom/LND.json")
-    machine_label: str = "PSM3"
+    machine_label: str = "PSM1"
     input_mode: str = "offline"
     mock_rate_hz: float = 30.0
     mock_loop: bool = False
     sample_timeout_sec: float = 0.5
-    ros_image_topic: str = "/stereo/left/image"
-    ros_joint_topic: str = "/dvrk/PSM3/state_joint_current"
-    ros_jaw_topic: str = "/dvrk/PSM3/state_jaw_current"
+    ros_image_topic: str = "/stereo/left/rectified_downscaled_image"
+    ros_joint_topic: str = "/PSM1/measured_js"
+    ros_jaw_topic: str = "/PSM1/jaw/measured_js"
     ros_sync_queue_size: int = 5
     ros_sync_slop_sec: float = 0.015
     ros_overlay_topic: str = "/dvrk_tracking/overlay"
@@ -25,7 +25,7 @@ class LiveTrackingConfig:
     ros_loss_topic: str = "/dvrk_tracking/loss"
     ros_fps_topic: str = "/dvrk_tracking/fps"
     ros_frame_id: str = "camera_left_optical_frame"
-    ros_child_frame_id: str = "PSM3_joint4_tracked"
+    ros_child_frame_id: str = "PSM1_joint4_tracked"
     mesh_dir: Path = Path("urdfs/dVRK/meshes")
     contour_tip_net_path: Path = Path("ContourTipNet/models/cnn_model.pth")
     use_low_res_mesh: bool = True

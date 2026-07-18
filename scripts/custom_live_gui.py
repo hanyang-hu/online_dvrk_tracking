@@ -176,9 +176,9 @@ class MainWindow(QMainWindow):
         self.mock_rate_spin.setValue(30.0)
         self.mock_loop_checkbox = QCheckBox("Loop")
 
-        self.ros_image_topic = QLineEdit("/stereo/left/image")
-        self.ros_joint_topic = QLineEdit("/dvrk/PSM3/state_joint_current")
-        self.ros_jaw_topic = QLineEdit("/dvrk/PSM3/state_jaw_current")
+        self.ros_image_topic = QLineEdit("/stereo/left/rectified_downscaled_image")
+        self.ros_joint_topic = QLineEdit("/PSM1/measured_js")
+        self.ros_jaw_topic = QLineEdit("/PSM1/jaw/measured_js")
         self.ros_sync_queue_size = QSpinBox()
         self.ros_sync_queue_size.setRange(1, 100)
         self.ros_sync_queue_size.setValue(5)
@@ -192,7 +192,7 @@ class MainWindow(QMainWindow):
         self.sample_timeout_spin.setDecimals(2)
         self.sample_timeout_spin.setValue(0.5)
         self.ros_frame_id = QLineEdit("camera_left_optical_frame")
-        self.ros_child_frame_id = QLineEdit("PSM3_joint4_tracked")
+        self.ros_child_frame_id = QLineEdit("PSM1_joint4_tracked")
 
         self._input_mode_rows = []
         input_form.addRow("Mode", self.input_mode_combo)
@@ -353,7 +353,7 @@ class MainWindow(QMainWindow):
             camera_calibration_path=self._resolve_path(self.cam_calib_path.text()),
             handeye_path=self._resolve_path(self.handeye_path.text()),
             lnd_json_path=self._resolve_path(self.lnd_path.text()),
-            machine_label="PSM3",
+            machine_label="PSM1",
             input_mode=self.input_mode_combo.currentData(),
             mock_rate_hz=self.mock_rate_spin.value(),
             mock_loop=self.mock_loop_checkbox.isChecked(),

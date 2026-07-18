@@ -16,9 +16,9 @@ from gui_live_tracking.ros2_source import Ros2FrameSource  # noqa: E402
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Receive one synchronized direct ROS 2 tracking sample.")
-    parser.add_argument("--image-topic", default="/stereo/left/image")
-    parser.add_argument("--joint-topic", default="/dvrk/PSM3/state_joint_current")
-    parser.add_argument("--jaw-topic", default="/dvrk/PSM3/state_jaw_current")
+    parser.add_argument("--image-topic", default="/stereo/left/rectified_downscaled_image")
+    parser.add_argument("--joint-topic", default="/PSM1/measured_js")
+    parser.add_argument("--jaw-topic", default="/PSM1/jaw/measured_js")
     parser.add_argument("--sync-queue-size", type=int, default=5)
     parser.add_argument("--sync-slop", type=float, default=0.015)
     parser.add_argument("--timeout", type=float, default=5.0)
