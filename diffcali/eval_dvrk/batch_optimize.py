@@ -241,7 +241,9 @@ class HeterogeneousBatchOptimize:
         # If you have a single reference for the entire batch, we just broadcast later
         # If you want separate references, store shape (B,H,W).
         self.ref_mask_b = None
-        if th.is_tensor(ref_keypoints):
+        if ref_keypoints is None:
+            self.ref_keypoints = None
+        elif th.is_tensor(ref_keypoints):
             self.ref_keypoints = ref_keypoints.clone().squeeze().to(self.device).float()
         else:
             self.ref_keypoints = th.tensor(ref_keypoints).squeeze().to(self.device).float()

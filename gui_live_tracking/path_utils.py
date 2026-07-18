@@ -46,6 +46,17 @@ def validate_config(config: LiveTrackingConfig) -> List[str]:
         errors.append("Mock replay rate must be positive.")
     if config.sample_timeout_sec <= 0:
         errors.append("Sample timeout must be positive.")
+    if config.use_turbo_handeye_init:
+        if config.batch_size <= 0:
+            errors.append("TuRBO batch size must be positive.")
+        if config.sample_number <= 0:
+            errors.append("TuRBO sample number must be positive.")
+        if config.sample_number <= config.batch_size:
+            errors.append("TuRBO sample number must be greater than batch size.")
+        if config.batch_size > 0 and config.sample_number % config.batch_size != 0:
+            errors.append("TuRBO sample number must be divisible by batch size.")
+        if config.batch_iters <= 0:
+            errors.append("TuRBO batch iterations must be positive.")
 
     _validate_file(config.camera_calibration_path, "Camera calibration", errors)
     _validate_file(config.handeye_path, "Hand-eye calibration", errors)

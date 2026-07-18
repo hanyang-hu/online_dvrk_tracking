@@ -42,6 +42,7 @@ class LiveTrackingConfig:
     use_filter: bool = True
     filter_option: str = "Kalman"
     cos_reparams: bool = True
+    use_turbo_handeye_init: bool = False
     use_bo_initializer: bool = True
     sample_number: int = 2000
     batch_size: int = 50

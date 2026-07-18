@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import time
 import traceback
 from pathlib import Path
@@ -123,7 +124,7 @@ class TrackingWorker(QObject):
         args.final_iters = cfg.final_iters
         args.arm = "psm2"
         args.sample_number = cfg.sample_number
-        args.use_bo_initializer = cfg.use_bo_initializer
+        args.use_bo_initializer = cfg.use_turbo_handeye_init
         args.use_nvdiffrast = cfg.use_nvdiffrast
         args.searcher = cfg.searcher
         args.online_iters = cfg.online_iters
@@ -245,6 +246,105 @@ class TrackingWorker(QObject):
 
     def _matrix_to_cTr(self, model: CtRNet, pose_matrix: torch.Tensor) -> torch.Tensor:
         return model.pose_matrix_to_cTr(pose_matrix.unsqueeze(0))[0]
+
+    def _run_turbo_pose_initializer(
+        self,
+        mask: torch.Tensor,
+        model: CtRNet,
+        robot_renderer,
+        ctrnet_args: SimpleNamespace,
+        args: SimpleNamespace,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        from TuRBO.turbo.turbo_1 import Turbo1
+        from diffcali.eval_dvrk.black_box_optimize import BayesOptBatchProblem
+
+        mask_path: Optional[str] = None
+        try:
+            mask_np = (mask.detach().squeeze() > 0).cpu().numpy().astype(np.uint8) * 255
+            with tempfile.NamedTemporaryFile(prefix="dvrk_turbo_mask_", suffix=".png", delete=False) as f:
+                mask_path = f.name
+            if not cv2.imwrite(mask_path, mask_np):
+                raise RuntimeError(f"Failed to write temporary TuRBO mask: {mask_path}")
+
+            bo_batch_problem = BayesOptBatchProblem(
+                model=model,
+                robot_renderer=robot_renderer,
+                ref_mask_file=mask_path,
+                ref_keypoints=None,
+                fx=ctrnet_args.fx,
+                fy=ctrnet_args.fy,
+                px=ctrnet_args.px,
+                py=ctrnet_args.py,
+                batch_size=args.batch_size,
+                ld1=3,
+                ld2=3,
+                ld3=3,
+                batch_iters=args.batch_iters,
+                lr=args.batch_opt_lr,
+            )
+
+            turbo = Turbo1(
+                f=bo_batch_problem,
+                lb=np.array([0.10, 90.0 - 60.0, 0.0, 0.0, -1.5707, -1.3963, 0.0]),
+                ub=np.array([0.17, 90.0 - 30.0, 360.0, 360.0, 0.0, 1.3963, 1.5707]),
+                n_init=args.batch_size,
+                max_evals=args.sample_number,
+                batch_size=args.batch_size,
+                max_cholesky_size=1000,
+                n_training_steps=50,
+                verbose=True,
+                min_cuda=1000,
+                device="cuda",
+                batch_eval=True,
+            )
+            turbo.optimize()
+
+            optimized_cTr_batch = bo_batch_problem.final_cTr_batch
+            optimized_joint_angles_batch = bo_batch_problem.joint_angles_batch
+            optimized_loss_batch = bo_batch_problem.final_loss_batch
+            if optimized_cTr_batch is None or optimized_joint_angles_batch is None or optimized_loss_batch is None:
+                raise RuntimeError("TuRBO did not produce any initialization candidates.")
+
+            valid_mask = torch.isfinite(optimized_loss_batch).to(device=optimized_loss_batch.device)
+            if not torch.any(valid_mask):
+                raise RuntimeError("TuRBO produced no finite initialization losses.")
+
+            valid_losses = optimized_loss_batch[valid_mask]
+            valid_cTrs = optimized_cTr_batch[valid_mask]
+            valid_joint_angles = optimized_joint_angles_batch[valid_mask]
+            best_idx = torch.argmin(valid_losses)
+            return (
+                valid_cTrs[best_idx].detach().clone(),
+                valid_joint_angles[best_idx].detach().clone(),
+                valid_losses[best_idx].detach().clone(),
+            )
+        finally:
+            if mask_path is not None:
+                try:
+                    os.unlink(mask_path)
+                except OSError:
+                    pass
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+    def _virtual_handeye_from_first_frame(
+        self,
+        model: CtRNet,
+        estimated_cTr_joint4: torch.Tensor,
+        raw_joint_angles: np.ndarray,
+        psm_arm: RobotLink,
+    ) -> np.ndarray:
+        """Solve cam_T_base from the TuRBO-estimated joint-4 pose and FK."""
+        psm_arm.updateJointAngles(raw_joint_angles)
+        fk_base_T_joint4 = np.asarray(psm_arm.baseToJointT[3], dtype=np.float64)
+        estimated_cam_T_joint4 = (
+            self._cTr_to_matrix(model, estimated_cTr_joint4)
+            .detach()
+            .cpu()
+            .numpy()
+            .astype(np.float64)
+        )
+        return estimated_cam_T_joint4 @ np.linalg.inv(fk_base_T_joint4)
 
     def _axis_to_optimizer_rot(self, cTr_axis: torch.Tensor, use_mix_angle: bool) -> torch.Tensor:
         cTr_opt = cTr_axis.clone()
@@ -422,6 +522,32 @@ class TrackingWorker(QObject):
                         get_init_mask(frame_idx=0, obj_id=0, points=pts_np, labels=lbs_np)
                     )
                     mask = (out_mask_logits.squeeze() > 0).float()
+
+                    if cfg.use_turbo_handeye_init:
+                        self.status.emit(
+                            "Running TuRBO first-frame pose initialization for virtual hand-eye correction..."
+                        )
+                        turbo_start = time.time()
+                        turbo_cTr, turbo_joint_angles, turbo_loss = self._run_turbo_pose_initializer(
+                            mask=mask,
+                            model=model,
+                            robot_renderer=robot_renderer,
+                            ctrnet_args=ctrnet_args,
+                            args=args,
+                        )
+                        cam_T_b = self._virtual_handeye_from_first_frame(
+                            model=model,
+                            estimated_cTr_joint4=turbo_cTr,
+                            raw_joint_angles=raw_joint_angles,
+                            psm_arm=psm_arm,
+                        )
+                        elapsed = time.time() - turbo_start
+                        self.status.emit(
+                            "TuRBO virtual hand-eye correction applied "
+                            f"in {elapsed:.1f}s. Best loss: {float(turbo_loss.item()):.6g}. "
+                            "cam_T_base was solved from FK, not copied from TuRBO. "
+                            f"Estimated visible joints: {turbo_joint_angles.detach().cpu().numpy().round(4).tolist()}"
+                        )
 
                     cTr, joint_angles = self._initialization(cam_T_b=cam_T_b, joint_angles=raw_joint_angles, psm_arm=psm_arm)
                     joint_angles = self._visible_joint_angles_from_raw(raw_joint_angles)

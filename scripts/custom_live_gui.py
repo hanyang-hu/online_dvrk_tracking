@@ -232,6 +232,11 @@ class MainWindow(QMainWindow):
 
         self.lumped_checkbox = QCheckBox("Use lumped error init")
         self.lumped_checkbox.setChecked(False)
+        self.turbo_handeye_btn = QPushButton("TuRBO Hand-Eye Init")
+        self.turbo_handeye_btn.setCheckable(True)
+        self.turbo_handeye_btn.setToolTip(
+            "On Start, estimate the first-frame pose with TuRBO and use it to correct the hand-eye transform for this run."
+        )
 
         settings_form.addRow("Renderer", self.renderer_combo)
         settings_form.addRow("Optimizer", self.optimizer_combo)
@@ -240,6 +245,7 @@ class MainWindow(QMainWindow):
         settings_form.addRow("Point loss", self.point_loss_checkbox)
         settings_form.addRow("Iterations/frame", self.iters_spin)
         settings_form.addRow("Lumped error", self.lumped_checkbox)
+        settings_form.addRow("First frame", self.turbo_handeye_btn)
 
         prompt_box = QGroupBox("Prompting")
         prompt_layout = QVBoxLayout(prompt_box)
@@ -379,6 +385,7 @@ class MainWindow(QMainWindow):
             use_pts_loss=self.point_loss_checkbox.isChecked(),
             online_iters=self.iters_spin.value(),
             use_lumped_error_init=self.lumped_checkbox.isChecked(),
+            use_turbo_handeye_init=self.turbo_handeye_btn.isChecked(),
         )
 
     def _update_mode_controls(self) -> None:
@@ -603,6 +610,7 @@ class MainWindow(QMainWindow):
         self.reinit_continue_btn.setEnabled(False)
         self.renderer_combo.setEnabled(False)
         self.input_mode_combo.setEnabled(False)
+        self.turbo_handeye_btn.setEnabled(False)
 
         self.worker_thread.start()
         self._paused = False
@@ -711,6 +719,7 @@ class MainWindow(QMainWindow):
         self.reinit_continue_btn.setEnabled(False)
         self.renderer_combo.setEnabled(True)
         self.input_mode_combo.setEnabled(True)
+        self.turbo_handeye_btn.setEnabled(True)
         self._update_mode_controls()
         self._paused = False
         self._relabel_mode_active = False

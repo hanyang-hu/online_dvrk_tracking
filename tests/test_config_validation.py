@@ -81,3 +81,23 @@ def test_bridge_endpoint_configuration_removed():
     cfg = LiveTrackingConfig()
 
     assert not any(name.startswith("bridge_") for name in vars(cfg))
+
+
+def test_turbo_handeye_init_validates_batch_settings(tmp_path):
+    cam, handeye, lnd, weights, mesh_dir = make_common_files(tmp_path)
+    cfg = LiveTrackingConfig(
+        input_mode="ros2",
+        camera_calibration_path=cam,
+        handeye_path=handeye,
+        lnd_json_path=lnd,
+        contour_tip_net_path=weights,
+        mesh_dir=mesh_dir,
+        use_turbo_handeye_init=True,
+        batch_size=50,
+        sample_number=75,
+        batch_iters=0,
+    )
+
+    errors = validate_config(cfg)
+    assert any("sample number must be divisible" in err for err in errors)
+    assert any("batch iterations" in err for err in errors)

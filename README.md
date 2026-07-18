@@ -237,6 +237,14 @@ Use **Replay rate** to choose the simulated stream rate. Enable **Loop** to repl
 
 ROS 2 mode subscribes directly to synchronized image, arm-joint, and jaw topics inside the tracking application. Select **ROS 2** in the GUI, configure the topic names, click **Load Initialization Frame**, add prompts, then click **Start**.
 
+Enable **TuRBO Hand-Eye Init** before clicking **Start** when the YAML hand-eye calibration is close but visibly misaligned. The first prompted frame is segmented with SAM2, TuRBO estimates the observed joint-4 pose from that mask, and the GUI solves a virtual per-run hand-eye transform from FK:
+
+```text
+corrected cam_T_base = estimated cam_T_joint4 @ inverse(FK base_T_joint4)
+```
+
+The YAML file is not overwritten. The TuRBO pose is not used directly as the hand-eye transform; it is only used together with the first frame's FK to solve the corrected transform for the current tracking run.
+
 ROS imports are lazy. Opening the GUI or using Offline/Mock-live mode does not require `rclpy`.
 
 ## Testing without a dVRK
@@ -286,6 +294,7 @@ The fake publisher sends image, arm-joint, and jaw messages with matching timest
 - **Downscale factor** trades resolution for speed.
 - **Use low-res mesh** enables lightweight dVRK meshes.
 - **Use point loss** enables keypoint point loss.
+- **TuRBO Hand-Eye Init** runs first-frame TuRBO pose initialization and solves a virtual corrected hand-eye transform from FK for the current run.
 - **Iterations/frame** and **Lumped error** can be adjusted while tracking is running.
 
 Prompt controls:
@@ -334,5 +343,6 @@ The output message headers use the original input sample timestamp.
 - If Python is `/usr/bin/python3`, restart the shell and activate Conda first.
 - If `rclpy` imports but `cv_bridge` or OpenCV fails, run `scripts/check_direct_ros2_environment.py` and inspect possible Conda/ROS shared-library conflicts.
 - If the GUI cannot load a ROS initialization frame, confirm the fake or real publisher is running, topic names match, QoS is compatible, and synchronization slop is large enough.
+- If TuRBO hand-eye initialization fails, check that the first-frame prompts produce a clean mask and that **Sample number** is greater than and divisible by **Batch size** in the live tracking config.
 - If Offline or Mock-live mode fails on the laptop, do not source ROS; run from the `online_dvrk` Conda environment only.
 - If tracking falls behind ROS input, stale samples are intentionally dropped to avoid growing latency.
