@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import sys
+import traceback
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -62,18 +63,20 @@ class PreviewLoader(QObject):
         self.timeout_sec = timeout_sec
 
     def run(self) -> None:
-        source = create_frame_source(self.config)
+        source = None
         try:
+            source = create_frame_source(self.config)
             source.start()
             sample = source.get_sample(timeout_sec=self.timeout_sec)
             if sample is None:
                 self.completed.emit(None, "")
             else:
                 self.completed.emit(sample, "")
-        except Exception as exc:
-            self.completed.emit(None, str(exc))
+        except Exception:
+            self.completed.emit(None, traceback.format_exc())
         finally:
-            source.stop()
+            if source is not None:
+                source.stop()
 
 
 class VideoLabel(QLabel):
@@ -340,6 +343,10 @@ class MainWindow(QMainWindow):
         if text in {"Waiting for ROS 2 samples...", "ROS 2 sample received."}:
             self.statusBar().showMessage(text)
 
+    def _error_summary(self, error: str) -> str:
+        lines = [line.strip() for line in error.splitlines() if line.strip()]
+        return lines[-1] if lines else "Unknown error"
+
     def _resolve_path(self, text: str) -> Path:
         p = Path(text)
         if not p.is_absolute():
@@ -463,8 +470,12 @@ class MainWindow(QMainWindow):
     def _on_ros_preview_completed(self, sample, error: str) -> None:
         self.load_frame_btn.setEnabled(True)
         if error:
-            QMessageBox.warning(self, "ROS 2 source error", error)
-            self._log("ROS 2 initialization sample failed.")
+            self._log(f"ROS 2 initialization sample failed:\n{error}")
+            QMessageBox.warning(
+                self,
+                "ROS 2 source error",
+                f"{self._error_summary(error)}\n\nSee the progress log for the file and line number.",
+            )
             return
 
         if sample is None:
@@ -681,8 +692,12 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Frame {frame_idx} | FPS {fps:.2f} | Loss {loss:.4f}")
 
     def _on_failed(self, error: str) -> None:
-        self._log(f"Error: {error}")
-        QMessageBox.critical(self, "Tracking failed", error)
+        self._log(f"Tracking failed:\n{error}")
+        QMessageBox.critical(
+            self,
+            "Tracking failed",
+            f"{self._error_summary(error)}\n\nSee the progress log for the file and line number.",
+        )
         self._teardown_worker()
 
     def _on_finished(self) -> None:

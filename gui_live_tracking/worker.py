@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import time
+import traceback
 from pathlib import Path
 from types import SimpleNamespace
 from typing import List, Optional, Tuple
@@ -33,7 +34,6 @@ from diffcali.utils.skeleton_visualizer import SkeletonVisualizer
 from sam2.build_sam import build_sam2_camera_predictor
 
 from gui_live_tracking.config import LiveTrackingConfig
-from gui_live_tracking.frame_source import TrackingSample
 from gui_live_tracking.result_sink import TrackingResult
 from gui_live_tracking.source_factory import create_frame_source, create_result_sink
 
@@ -46,18 +46,11 @@ class TrackingWorker(QObject):
     finished = Signal()
     failed = Signal(str)
 
-    def __init__(
-        self,
-        config: LiveTrackingConfig,
-        prompt_points: List[Tuple[int, int]],
-        prompt_labels: List[int],
-        initial_sample: Optional[TrackingSample] = None,
-    ):
+    def __init__(self, config: LiveTrackingConfig, prompt_points: List[Tuple[int, int]], prompt_labels: List[int]):
         super().__init__()
         self.config = config
         self.prompt_points = prompt_points
         self.prompt_labels = prompt_labels
-        self.initial_sample = self._copy_sample(initial_sample) if initial_sample is not None else None
         self._stop = False
         self._pause_requested = False
         self._mutex = QMutex()
@@ -66,14 +59,6 @@ class TrackingWorker(QObject):
 
         self._runtime_online_iters = config.online_iters
         self._runtime_use_lumped = config.use_lumped_error_init
-
-    def _copy_sample(self, sample: TrackingSample) -> TrackingSample:
-        return TrackingSample(
-            frame_bgr=sample.frame_bgr.copy(),
-            raw_joint_angles=sample.raw_joint_angles.copy(),
-            timestamp_ns=sample.timestamp_ns,
-            source_index=sample.source_index,
-        )
 
     def request_stop(self) -> None:
         with QMutexLocker(self._mutex):
@@ -123,8 +108,8 @@ class TrackingWorker(QObject):
         try:
             self._run_impl()
             self.finished.emit()
-        except Exception as exc:
-            self.failed.emit(str(exc))
+        except Exception:
+            self.failed.emit(traceback.format_exc())
 
     def _build_args(self) -> SimpleNamespace:
         cfg = self.config
@@ -388,10 +373,8 @@ class TrackingWorker(QObject):
             )
 
         psm_arm = RobotLink(str(cfg.lnd_json_path))
-        expected_joint_count = len(psm_arm.joint_angles)
 
         init_done = False
-        pending_initial_sample = self.initial_sample
         w_lumped = torch.eye(4, dtype=torch.float32, device=model.device)
         seg_time_lst: List[float] = []
         track_time_lst: List[float] = []
@@ -408,11 +391,7 @@ class TrackingWorker(QObject):
                 if should_stop:
                     break
 
-                if pending_initial_sample is not None:
-                    sample = pending_initial_sample
-                    pending_initial_sample = None
-                else:
-                    sample = source.get_sample(timeout_sec=cfg.sample_timeout_sec)
+                sample = source.get_sample(timeout_sec=cfg.sample_timeout_sec)
                 if sample is None:
                     if cfg.input_mode == "ros2":
                         if not self._waiting_for_ros:
@@ -428,16 +407,6 @@ class TrackingWorker(QObject):
                 frame_idx = sample.source_index
                 frame = sample.frame_bgr.copy()
                 raw_joint_angles = sample.raw_joint_angles.copy()
-                if raw_joint_angles.size != expected_joint_count:
-                    raise RuntimeError(
-                        "Received a joint vector with "
-                        f"{raw_joint_angles.size} values for frame {frame_idx}, "
-                        f"but {expected_joint_count} values are required by {cfg.lnd_json_path}. "
-                        "ROS 2 mode reads sensor_msgs/JointState.position from the arm topic and "
-                        "then appends sensor_msgs/JointState.position from the jaw topic. Confirm "
-                        "that /PSM1/measured_js publishes the six arm positions and "
-                        "/PSM1/jaw/measured_js publishes one jaw position."
-                    )
                 frame_shape_orig = (frame.shape[1], frame.shape[0])
                 frame = cv2.resize(frame, (ctrnet_args.width, ctrnet_args.height))
                 frame = (frame * args.dark_factor).astype(np.uint8)
