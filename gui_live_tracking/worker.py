@@ -688,14 +688,12 @@ class TrackingWorker(QObject):
                             keypoints=None,
                             cTr_init=None,
                         )
-                    else:
+                    elif runtime_use_lumped:
                         cTr_fk, joint_angles_fk = self._initialization(
                             cam_T_b=cam_T_b,
                             joint_angles=raw_joint_angles,
                             psm_arm=psm_arm,
                         )
-
-                    if (not runtime_joint_angle_free) and runtime_use_lumped:
                         T_A = self._cTr_to_matrix(model, cTr_fk)
                         T_init = w_lumped @ T_A
                         cTr_init_axis = self._matrix_to_cTr(model, T_init)
@@ -709,14 +707,14 @@ class TrackingWorker(QObject):
                         )
                         T_B = self._cTr_to_matrix(model, cTr)
                         w_lumped = T_B @ torch.linalg.inv(T_A)
-                    elif not runtime_joint_angle_free:
-                        cTr_init = self._axis_to_optimizer_rot(cTr_fk, args.use_mix_angle)
+                    else:
+                        joint_angles_reading = self._visible_joint_angles_from_raw(raw_joint_angles)
                         cTr, joint_angles, loss = tracker.track_frame(
                             ref_mask=mask,
-                            joint_angles=joint_angles_fk,
+                            joint_angles=joint_angles_reading,
                             is_init=False,
                             keypoints=None,
-                            cTr_init=cTr_init,
+                            cTr_init=None,
                         )
 
                     torch.cuda.synchronize()
@@ -796,7 +794,8 @@ class TrackingWorker(QObject):
                         if runtime_joint_angle_free_after:
                             cTr_reinit = cTr.detach().clone()
                             joint_reinit = joint_angles.detach().clone()
-                        else:
+                            cTr_reinit_input = None
+                        elif runtime_use_lumped_after:
                             paused_raw_joints = paused_sample.raw_joint_angles.copy()
                             cTr_reinit, _ = self._initialization(
                                 cam_T_b=cam_T_b,
@@ -804,6 +803,12 @@ class TrackingWorker(QObject):
                                 psm_arm=psm_arm,
                             )
                             joint_reinit = self._visible_joint_angles_from_raw(paused_raw_joints)
+                            cTr_reinit_input = self._axis_to_optimizer_rot(cTr_reinit, args.use_mix_angle)
+                        else:
+                            paused_raw_joints = paused_sample.raw_joint_angles.copy()
+                            cTr_reinit = cTr.detach().clone()
+                            joint_reinit = self._visible_joint_angles_from_raw(paused_raw_joints)
+                            cTr_reinit_input = None
 
                         # Re-initialize at the paused sample with the selected initialization source.
                         tracker = build_tracker(
@@ -818,7 +823,7 @@ class TrackingWorker(QObject):
                             joint_angles=joint_reinit,
                             is_init=True,
                             keypoints=None,
-                            cTr_init=None if runtime_joint_angle_free_after else self._axis_to_optimizer_rot(cTr_reinit, args.use_mix_angle),
+                            cTr_init=cTr_reinit_input,
                         )
 
                         if runtime_use_lumped_after:
