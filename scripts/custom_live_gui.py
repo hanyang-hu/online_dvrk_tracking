@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sys
 import traceback
+from dataclasses import replace
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -232,6 +233,10 @@ class MainWindow(QMainWindow):
 
         self.lumped_checkbox = QCheckBox("Use lumped error init")
         self.lumped_checkbox.setChecked(False)
+        self.joint_angle_free_checkbox = QCheckBox("Joint-angle free mode")
+        self.joint_angle_free_checkbox.setToolTip(
+            "After the first frame, ignore current joint readings and initialize each optimization from the previous optimized pose and joints."
+        )
         self.turbo_handeye_btn = QPushButton("TuRBO Hand-Eye Init")
         self.turbo_handeye_btn.setCheckable(True)
         self.turbo_handeye_btn.setToolTip(
@@ -245,6 +250,7 @@ class MainWindow(QMainWindow):
         settings_form.addRow("Point loss", self.point_loss_checkbox)
         settings_form.addRow("Iterations/frame", self.iters_spin)
         settings_form.addRow("Lumped error", self.lumped_checkbox)
+        settings_form.addRow("Joint angles", self.joint_angle_free_checkbox)
         settings_form.addRow("First frame", self.turbo_handeye_btn)
 
         prompt_box = QGroupBox("Prompting")
@@ -307,6 +313,7 @@ class MainWindow(QMainWindow):
 
         self.iters_spin.valueChanged.connect(self._runtime_update)
         self.lumped_checkbox.stateChanged.connect(self._runtime_update)
+        self.joint_angle_free_checkbox.stateChanged.connect(self._runtime_update)
         self.input_mode_combo.currentIndexChanged.connect(self._update_mode_controls)
         self._update_mode_controls()
 
@@ -385,6 +392,8 @@ class MainWindow(QMainWindow):
             use_pts_loss=self.point_loss_checkbox.isChecked(),
             online_iters=self.iters_spin.value(),
             use_lumped_error_init=self.lumped_checkbox.isChecked(),
+            joint_angle_free_mode=self.joint_angle_free_checkbox.isChecked(),
+            use_prev_joint_angles=self.joint_angle_free_checkbox.isChecked(),
             use_turbo_handeye_init=self.turbo_handeye_btn.isChecked(),
         )
 
@@ -583,6 +592,23 @@ class MainWindow(QMainWindow):
 
     def _start_tracking(self) -> None:
         cfg = self._build_config()
+        if cfg.use_turbo_handeye_init:
+            default_path = REPO_ROOT / "data" / "custom" / f"handeye_virtual_{cfg.machine_label}.yaml"
+            save_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save virtual calibrated hand-eye YAML",
+                str(default_path),
+                "YAML files (*.yaml *.yml);;All files (*.*)",
+            )
+            if not save_path:
+                QMessageBox.warning(
+                    self,
+                    "Save path required",
+                    "Choose a YAML path for the virtual calibrated hand-eye file, or turn off TuRBO Hand-Eye Init.",
+                )
+                return
+            cfg = replace(cfg, virtual_handeye_save_path=self._resolve_path(save_path))
+
         errors = validate_config(cfg)
         if errors:
             QMessageBox.warning(self, "Invalid configuration", "\n".join(errors))
@@ -601,6 +627,7 @@ class MainWindow(QMainWindow):
         self.worker.paused.connect(self._on_paused)
         self.worker.status.connect(self._log)
         self.worker.metrics.connect(self._on_metrics)
+        self.worker.virtual_handeye_saved.connect(self._on_virtual_handeye_saved)
         self.worker.failed.connect(self._on_failed)
         self.worker.finished.connect(self._on_finished)
 
@@ -672,6 +699,7 @@ class MainWindow(QMainWindow):
             self.worker.update_runtime(
                 online_iters=self.iters_spin.value(),
                 use_lumped_error=self.lumped_checkbox.isChecked(),
+                joint_angle_free=self.joint_angle_free_checkbox.isChecked(),
             )
 
     def _on_frame_ready(self, frame_rgb) -> None:
@@ -699,6 +727,16 @@ class MainWindow(QMainWindow):
     def _on_metrics(self, fps: float, loss: float, frame_idx: int) -> None:
         self.statusBar().showMessage(f"Frame {frame_idx} | FPS {fps:.2f} | Loss {loss:.4f}")
 
+    def _on_virtual_handeye_saved(self, path_obj) -> None:
+        path = Path(path_obj)
+        try:
+            path_text = os.path.relpath(path, REPO_ROOT)
+        except ValueError:
+            path_text = str(path)
+        self.handeye_path.setText(path_text)
+        self.turbo_handeye_btn.setChecked(False)
+        self._log("Virtual hand-eye YAML selected for future starts; TuRBO disabled.")
+
     def _on_failed(self, error: str) -> None:
         self._log(f"Tracking failed:\n{error}")
         QMessageBox.critical(
@@ -720,6 +758,7 @@ class MainWindow(QMainWindow):
         self.renderer_combo.setEnabled(True)
         self.input_mode_combo.setEnabled(True)
         self.turbo_handeye_btn.setEnabled(True)
+        self.joint_angle_free_checkbox.setEnabled(True)
         self._update_mode_controls()
         self._paused = False
         self._relabel_mode_active = False

@@ -101,9 +101,30 @@ def _tensor_summary(name, value):
         return f"{name}: shape={tuple(value.shape)}, finite=0/{total_count}"
 
 
-def _require_best_solution(logger, problem, ref_mask, joint_angles, center_init, phase):
+def _tensor_values_for_debug(value):
+    if value is None:
+        return None
+    if not torch.is_tensor(value):
+        return value
+    return value.detach().cpu().numpy().tolist()
+
+
+def _require_best_solution(
+    logger,
+    problem,
+    ref_mask,
+    joint_angles,
+    center_init,
+    phase,
+    input_cTr=None,
+    input_joint_angles=None,
+):
     if logger.best_solution is not None:
         return logger.best_solution
+
+    print("[Tracker debug] Optimization result is None.")
+    print(f"[Tracker debug] Input pose: {_tensor_values_for_debug(input_cTr)}")
+    print(f"[Tracker debug] Input joint angles: {_tensor_values_for_debug(input_joint_angles)}")
 
     details = [
         f"phase={phase}",
@@ -1185,6 +1206,9 @@ class Tracker:
             #         joint_angles[:2] = flipped_wrist_pitch_yaw
         except:
             raise ValueError(f"Error in cloning joint angles. joint_angles: {joint_angles}, turn on --use_prev_joint_angles to use previous joint angles as initialization.")
+
+        debug_input_cTr = cTr.detach().clone()
+        debug_input_joint_angles = joint_angles.detach().clone()
         
         if self.args.cos_reparams:
             joint_angles_R = self.problem.joint_angles_ub - self.problem.joint_angles_lb
@@ -1224,6 +1248,8 @@ class Tracker:
                 joint_angles,
                 center_init,
                 "track_frame_init" if is_init else "track_frame",
+                input_cTr=debug_input_cTr,
+                input_joint_angles=debug_input_joint_angles,
             )
 
             best_solution = best_solution * self.problem.lengthscales
@@ -1264,8 +1290,8 @@ class Tracker:
                     cTr = torch.from_numpy(filtered_state[:self.problem.pose_dim]).to(self.model.device).type(cTr.dtype)
                     joint_angles = torch.from_numpy(filtered_state[self.problem.pose_dim:]).to(self.model.device).type(joint_angles.dtype)
 
-                self._prev_cTr = cTr.detach().clone()
-                self._prev_joint_angles = joint_angles.detach().clone()
+            self._prev_cTr = cTr.detach().clone()
+            self._prev_joint_angles = joint_angles.detach().clone()
 
             if is_init:
                 self.problem.dist_loss = use_dist_loss # restore distance loss

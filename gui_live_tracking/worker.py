@@ -44,6 +44,7 @@ class TrackingWorker(QObject):
     paused = Signal(object, int)
     status = Signal(str)
     metrics = Signal(float, float, int)
+    virtual_handeye_saved = Signal(object)
     finished = Signal()
     failed = Signal(str)
 
@@ -61,6 +62,9 @@ class TrackingWorker(QObject):
 
         self._runtime_online_iters = config.online_iters
         self._runtime_use_lumped = config.use_lumped_error_init
+        self._runtime_joint_angle_free = config.joint_angle_free_mode
+        self._turbo_handeye_applied = False
+        self._joint_free_lumped_warned = False
 
     def request_stop(self) -> None:
         with QMutexLocker(self._mutex):
@@ -79,14 +83,21 @@ class TrackingWorker(QObject):
             self._pending_reinit_prompts = (prompt_points, prompt_labels)
             self._pause_requested = False
 
-    def update_runtime(self, online_iters: int, use_lumped_error: bool) -> None:
+    def update_runtime(self, online_iters: int, use_lumped_error: bool, joint_angle_free: bool) -> None:
         with QMutexLocker(self._mutex):
             self._runtime_online_iters = max(1, int(online_iters))
             self._runtime_use_lumped = bool(use_lumped_error)
+            self._runtime_joint_angle_free = bool(joint_angle_free)
 
-    def _snapshot_runtime(self) -> Tuple[bool, bool, int, bool]:
+    def _snapshot_runtime(self) -> Tuple[bool, bool, int, bool, bool]:
         with QMutexLocker(self._mutex):
-            return self._stop, self._pause_requested, self._runtime_online_iters, self._runtime_use_lumped
+            return (
+                self._stop,
+                self._pause_requested,
+                self._runtime_online_iters,
+                self._runtime_use_lumped,
+                self._runtime_joint_angle_free,
+            )
 
     def _consume_pending_reinit_prompts(self) -> Optional[Tuple[List[Tuple[int, int]], List[int]]]:
         with QMutexLocker(self._mutex):
@@ -99,7 +110,7 @@ class TrackingWorker(QObject):
         self.paused.emit(frame_rgb.copy(), frame_idx)
 
         while True:
-            should_stop, pause_requested, _, _ = self._snapshot_runtime()
+            should_stop, pause_requested, _, _, _ = self._snapshot_runtime()
             if should_stop:
                 return None
             if not pause_requested:
@@ -112,6 +123,29 @@ class TrackingWorker(QObject):
             self.finished.emit()
         except Exception:
             self.failed.emit(traceback.format_exc())
+
+    def _make_stdev_init(self, use_prev_joint_angles: bool) -> torch.Tensor:
+        stdev_init = torch.tensor([1.0] * 10, dtype=torch.float32).cuda()
+        stdev_init[:3] *= torch.tensor([1e-2, 1e-1, 1e-2], dtype=torch.float32).cuda()
+        stdev_init[3:6] *= 1e-3
+        stdev_init[6:] *= 5e-2
+        stdev_init = stdev_init.detach()
+        stdev_init[6] *= 2
+        stdev_init[7] *= 2
+        stdev_init[8:] *= 2
+        if not use_prev_joint_angles:
+            stdev_init[6:] /= 10.0
+        return stdev_init
+
+    def _apply_joint_mode_to_tracker(
+        self,
+        args: SimpleNamespace,
+        tracker: Tracker,
+        joint_angle_free: bool,
+    ) -> None:
+        args.use_prev_joint_angles = bool(joint_angle_free)
+        args.stdev_init = self._make_stdev_init(args.use_prev_joint_angles)
+        tracker.stdev_init = args.stdev_init[:9] if args.symmetric_jaw else args.stdev_init
 
     def _build_args(self) -> SimpleNamespace:
         cfg = self.config
@@ -138,7 +172,7 @@ class TrackingWorker(QObject):
         args.symmetric_jaw = True
         args.use_render_loss = True
         args.use_pts_loss = cfg.use_pts_loss
-        args.use_prev_joint_angles = cfg.use_prev_joint_angles
+        args.use_prev_joint_angles = cfg.use_prev_joint_angles or cfg.joint_angle_free_mode
         args.rotation_parameterization = cfg.rotation_parameterization
         args.mse_weight = 6.0
         args.dist_weight = 0.0
@@ -154,18 +188,8 @@ class TrackingWorker(QObject):
         args.use_filter = args.filter_option != "None"
         args.use_mix_angle = args.rotation_parameterization == "MixAngle"
 
-        stdev_init = torch.tensor([1.0] * 10, dtype=torch.float32).cuda()
-        stdev_init[:3] *= torch.tensor([1e-2, 1e-1, 1e-2], dtype=torch.float32).cuda()
-        stdev_init[3:6] *= 1e-3
-        stdev_init[6:] *= 5e-2
-        stdev_init = stdev_init.detach()
-        stdev_init[6] *= 2
-        stdev_init[7] *= 2
-        stdev_init[8:] *= 2
-        if not args.use_prev_joint_angles:
-            stdev_init[6:] /= 10.0
         # Tracker expects the concrete tensor value here; RealOrVector is only a typing alias.
-        args.stdev_init = stdev_init
+        args.stdev_init = self._make_stdev_init(args.use_prev_joint_angles)
 
         return args
 
@@ -347,6 +371,42 @@ class TrackingWorker(QObject):
         )
         return estimated_cam_T_joint4 @ np.linalg.inv(fk_base_T_joint4)
 
+    def _save_virtual_handeye_yaml(
+        self,
+        hand_eye_data: dict,
+        cam_T_b: np.ndarray,
+        loss: torch.Tensor,
+        estimated_visible_joints: torch.Tensor,
+    ) -> None:
+        if self.config.virtual_handeye_save_path is None:
+            return
+
+        save_path = Path(self.config.virtual_handeye_save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+
+        out_data = dict(hand_eye_data) if isinstance(hand_eye_data, dict) else {}
+        tvec_key = f"{self.config.machine_label}_tvec"
+        rvec_key = f"{self.config.machine_label}_rvec"
+        rvec, _ = cv2.Rodrigues(cam_T_b[:3, :3])
+        out_data[tvec_key] = (cam_T_b[:3, 3] * 1000.0).astype(float).tolist()
+        out_data[rvec_key] = rvec.reshape(3).astype(float).tolist()
+        out_data["virtual_handeye_metadata"] = {
+            "machine_label": self.config.machine_label,
+            "source_handeye_path": str(self.config.handeye_path),
+            "turbo_loss": float(loss.item()) if isinstance(loss, torch.Tensor) else float(loss),
+            "estimated_visible_joints": estimated_visible_joints.detach().cpu().numpy().astype(float).tolist(),
+            "units": {
+                tvec_key: "millimeters",
+                rvec_key: "axis-angle radians",
+            },
+        }
+
+        with open(save_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(out_data, f, sort_keys=False)
+
+        self.status.emit(f"Saved virtual calibrated hand-eye YAML: {save_path}")
+        self.virtual_handeye_saved.emit(save_path)
+
     def _axis_to_optimizer_rot(self, cTr_axis: torch.Tensor, use_mix_angle: bool) -> torch.Tensor:
         cTr_opt = cTr_axis.clone()
         if use_mix_angle:
@@ -437,8 +497,8 @@ class TrackingWorker(QObject):
             return Tracker(
                 model=model,
                 robot_renderer=robot_renderer,
-                init_cTr=init_cTr,
-                init_joint_angles=init_joint_angles,
+                init_cTr=init_cTr.detach().clone(),
+                init_joint_angles=init_joint_angles.detach().clone(),
                 num_iters=num_iters,
                 stdev_init=args.stdev_init,
                 intr=intr,
@@ -486,11 +546,21 @@ class TrackingWorker(QObject):
             source.start()
             sink.start()
             self.status.emit(f"Using input mode: {cfg.input_mode}")
+            if cfg.joint_angle_free_mode:
+                self.status.emit(
+                    "Joint-angle free mode enabled: first-frame joints seed initialization; "
+                    "subsequent frames and re-init use only the previous optimized pose and joints."
+                )
 
             while True:
-                should_stop, _, runtime_iters, runtime_use_lumped = self._snapshot_runtime()
+                should_stop, _, runtime_iters, runtime_use_lumped, runtime_joint_angle_free = self._snapshot_runtime()
                 if should_stop:
                     break
+                if runtime_joint_angle_free and runtime_use_lumped:
+                    runtime_use_lumped = False
+                    if not self._joint_free_lumped_warned:
+                        self.status.emit("Ignoring lumped-error init while joint-angle free mode is enabled.")
+                        self._joint_free_lumped_warned = True
 
                 sample = source.get_sample(timeout_sec=cfg.sample_timeout_sec)
                 if sample is None:
@@ -538,7 +608,7 @@ class TrackingWorker(QObject):
                             f"shape={tuple(mask.shape)}, foreground_pixels={int(mask.sum().item())}"
                         )
 
-                    if cfg.use_turbo_handeye_init:
+                    if cfg.use_turbo_handeye_init and not self._turbo_handeye_applied:
                         self.status.emit(
                             "Running TuRBO first-frame pose initialization for virtual hand-eye correction..."
                         )
@@ -556,6 +626,13 @@ class TrackingWorker(QObject):
                             raw_joint_angles=raw_joint_angles,
                             psm_arm=psm_arm,
                         )
+                        self._turbo_handeye_applied = True
+                        self._save_virtual_handeye_yaml(
+                            hand_eye_data=hand_eye_data,
+                            cam_T_b=cam_T_b,
+                            loss=turbo_loss,
+                            estimated_visible_joints=turbo_joint_angles,
+                        )
                         elapsed = time.time() - turbo_start
                         self.status.emit(
                             "TuRBO virtual hand-eye correction applied "
@@ -572,6 +649,7 @@ class TrackingWorker(QObject):
                         init_joint_angles=joint_angles,
                         num_iters=runtime_iters,
                     )
+                    self._apply_joint_mode_to_tracker(args, tracker, runtime_joint_angle_free)
 
                     cTr, joint_angles, loss = tracker.track_frame(
                         ref_mask=mask,
@@ -600,14 +678,24 @@ class TrackingWorker(QObject):
                     torch.cuda.synchronize()
                     t2 = time.time()
 
-                    cTr_fk, joint_angles_fk = self._initialization(
-                        cam_T_b=cam_T_b,
-                        joint_angles=raw_joint_angles,
-                        psm_arm=psm_arm,
-                    )
-
                     tracker.num_iters = runtime_iters
-                    if runtime_use_lumped:
+                    self._apply_joint_mode_to_tracker(args, tracker, runtime_joint_angle_free)
+                    if runtime_joint_angle_free:
+                        cTr, joint_angles, loss = tracker.track_frame(
+                            ref_mask=mask,
+                            joint_angles=joint_angles,
+                            is_init=False,
+                            keypoints=None,
+                            cTr_init=None,
+                        )
+                    else:
+                        cTr_fk, joint_angles_fk = self._initialization(
+                            cam_T_b=cam_T_b,
+                            joint_angles=raw_joint_angles,
+                            psm_arm=psm_arm,
+                        )
+
+                    if (not runtime_joint_angle_free) and runtime_use_lumped:
                         T_A = self._cTr_to_matrix(model, cTr_fk)
                         T_init = w_lumped @ T_A
                         cTr_init_axis = self._matrix_to_cTr(model, T_init)
@@ -621,7 +709,7 @@ class TrackingWorker(QObject):
                         )
                         T_B = self._cTr_to_matrix(model, cTr)
                         w_lumped = T_B @ torch.linalg.inv(T_A)
-                    else:
+                    elif not runtime_joint_angle_free:
                         cTr_init = self._axis_to_optimizer_rot(cTr_fk, args.use_mix_angle)
                         cTr, joint_angles, loss = tracker.track_frame(
                             ref_mask=mask,
@@ -677,13 +765,20 @@ class TrackingWorker(QObject):
                 self.metrics.emit(fps, loss_val, frame_idx)
 
                 # Pause support: allow user to continue directly or re-initialize from the current sample.
-                should_stop, pause_requested, _, runtime_use_lumped_after = self._snapshot_runtime()
+                (
+                    should_stop,
+                    pause_requested,
+                    runtime_iters_after,
+                    runtime_use_lumped_after,
+                    runtime_joint_angle_free_after,
+                ) = self._snapshot_runtime()
                 if should_stop:
                     break
+                if runtime_joint_angle_free_after:
+                    runtime_use_lumped_after = False
                 if pause_requested:
                     paused_sample = sample
                     paused_frame = frame.copy()
-                    paused_raw_joints = paused_sample.raw_joint_angles.copy()
                     paused_raw_rgb = cv2.cvtColor(paused_frame, cv2.COLOR_BGR2RGB)
                     reinit_prompts = self._wait_while_paused(paused_raw_rgb, frame_idx)
                     if reinit_prompts is None:
@@ -698,26 +793,32 @@ class TrackingWorker(QObject):
                         )
                         mask = (out_mask_logits.squeeze() > 0).float()
 
-                        cTr_reinit, _ = self._initialization(
-                            cam_T_b=cam_T_b,
-                            joint_angles=paused_raw_joints,
-                            psm_arm=psm_arm,
-                        )
-                        joint_reinit = self._visible_joint_angles_from_raw(paused_raw_joints)
+                        if runtime_joint_angle_free_after:
+                            cTr_reinit = cTr.detach().clone()
+                            joint_reinit = joint_angles.detach().clone()
+                        else:
+                            paused_raw_joints = paused_sample.raw_joint_angles.copy()
+                            cTr_reinit, _ = self._initialization(
+                                cam_T_b=cam_T_b,
+                                joint_angles=paused_raw_joints,
+                                psm_arm=psm_arm,
+                            )
+                            joint_reinit = self._visible_joint_angles_from_raw(paused_raw_joints)
 
-                        # Re-initialize from scratch at the paused sample: ignore previous optimization state.
+                        # Re-initialize at the paused sample with the selected initialization source.
                         tracker = build_tracker(
                             init_cTr=cTr_reinit,
                             init_joint_angles=joint_reinit,
-                            num_iters=runtime_iters,
+                            num_iters=runtime_iters_after,
                         )
+                        self._apply_joint_mode_to_tracker(args, tracker, runtime_joint_angle_free_after)
 
                         cTr, joint_angles, loss = tracker.track_frame(
                             ref_mask=mask,
                             joint_angles=joint_reinit,
                             is_init=True,
                             keypoints=None,
-                            cTr_init=cTr_reinit,
+                            cTr_init=None if runtime_joint_angle_free_after else self._axis_to_optimizer_rot(cTr_reinit, args.use_mix_angle),
                         )
 
                         if runtime_use_lumped_after:

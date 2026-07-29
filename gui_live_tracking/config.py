@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 
 @dataclass
@@ -42,7 +43,9 @@ class LiveTrackingConfig:
     use_filter: bool = True
     filter_option: str = "Kalman"
     cos_reparams: bool = True
+    joint_angle_free_mode: bool = False
     use_turbo_handeye_init: bool = False
+    virtual_handeye_save_path: Optional[Path] = None
     use_bo_initializer: bool = True
     sample_number: int = 2000
     batch_size: int = 50

@@ -5,6 +5,19 @@ from torch.utils.data import Dataset
 import tqdm
 import cv2
 
+from synthetic_features import (
+    EDGE_KEYS,
+    KEYPOINT_KEYS,
+    choose_feature_file,
+    first_present,
+    gaussian_heatmap,
+    line_heatmaps,
+    load_feature_records,
+    read_mask,
+    record_has_edges,
+    resolve_record_path,
+)
+
 
 class ContourTipDataset(Dataset):
     def __init__(self, feature_dir, label_dir, device="cuda", use_gaussian_label=False, sigma=1.5):
@@ -184,6 +197,79 @@ class KeypointDataset(Dataset):
             self.targets[idx],
             self.distmaps[idx]
         )
+
+
+class SyntheticHeatmapDataset(Dataset):
+    def __init__(
+        self,
+        data_root=".",
+        features_json="auto",
+        mask_shape=224,
+        keypoint_sigma=1.5,
+        edge_sigma=1.5,
+        require_edges=None,
+    ):
+        self.data_root = data_root
+        self.mask_shape = mask_shape
+        self.features_json = choose_feature_file(
+            data_root=data_root,
+            features_json=features_json,
+            require_edges=require_edges,
+        )
+        if self.features_json is None:
+            raise FileNotFoundError(
+                "Could not find features_v3.json/features_v4.json. "
+                "Pass --features_json explicitly or place the feature file in the data root/current folder."
+            )
+
+        records = load_feature_records(self.features_json)
+        self.has_edges = any(record_has_edges(record) for record in records)
+
+        samples = []
+        for record in tqdm.tqdm(records, desc=f"Loading {os.path.basename(self.features_json)}", ncols=110):
+            if require_edges is True and not record_has_edges(record):
+                continue
+
+            mask_path = resolve_record_path(record, self.features_json, data_root=data_root)
+            mask, orig_hw = read_mask(mask_path, mask_shape)
+
+            keypoints = first_present(record, KEYPOINT_KEYS)
+            keypoint_target = gaussian_heatmap(
+                keypoints,
+                out_size=mask_shape,
+                orig_hw=orig_hw,
+                sigma=keypoint_sigma,
+            )
+
+            edge_value = first_present(record, EDGE_KEYS)
+            edge_target = line_heatmaps(
+                edge_value,
+                out_size=mask_shape,
+                orig_hw=orig_hw,
+                sigma=edge_sigma,
+                channels=2,
+            )
+
+            samples.append(
+                (
+                    mask,
+                    torch.from_numpy(keypoint_target).unsqueeze(0),
+                    torch.from_numpy(edge_target),
+                    mask_path,
+                )
+            )
+
+        if not samples:
+            raise ValueError(f"No usable samples found in {self.features_json}")
+
+        self.samples = samples
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        mask, keypoint_target, edge_target, _ = self.samples[idx]
+        return mask, keypoint_target, edge_target
     
 
 if __name__ == "__main__":
@@ -256,4 +342,3 @@ if __name__ == "__main__":
     #     # cv2.imwrite(f"mask_{idx}.png", mask_np)
     #     # cv2.imwrite(f"heatmap_{idx}.png", heatmap_color)
     #     cv2.imwrite(f"overlay_{idx}.png", overlay)
-

@@ -57,6 +57,10 @@ def validate_config(config: LiveTrackingConfig) -> List[str]:
             errors.append("TuRBO sample number must be divisible by batch size.")
         if config.batch_iters <= 0:
             errors.append("TuRBO batch iterations must be positive.")
+        if config.virtual_handeye_save_path is not None:
+            save_parent = config.virtual_handeye_save_path.parent
+            if not save_parent.exists() or not save_parent.is_dir():
+                errors.append(f"Virtual hand-eye save directory does not exist: {save_parent}")
 
     _validate_file(config.camera_calibration_path, "Camera calibration", errors)
     _validate_file(config.handeye_path, "Hand-eye calibration", errors)
