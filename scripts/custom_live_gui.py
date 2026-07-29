@@ -250,6 +250,11 @@ class MainWindow(QMainWindow):
         self.joint_angle_free_checkbox.setToolTip(
             "After the first frame, ignore current joint readings and initialize each optimization from the previous optimized pose and joints."
         )
+        self.recover_checkbox = QCheckBox("Recover from invalid loss")
+        self.recover_checkbox.setChecked(True)
+        self.recover_checkbox.setToolTip(
+            "When tracking returns an invalid loss or state, reuse the last valid pose and re-seed the next frame from it."
+        )
         self.turbo_handeye_btn = QPushButton("TuRBO Hand-Eye Init")
         self.turbo_handeye_btn.setCheckable(True)
         self.turbo_handeye_btn.setToolTip(
@@ -264,6 +269,7 @@ class MainWindow(QMainWindow):
         settings_form.addRow("Iterations/frame", self.iters_spin)
         settings_form.addRow("Lumped error", self.lumped_checkbox)
         settings_form.addRow("Joint angles", self.joint_angle_free_checkbox)
+        settings_form.addRow("Recover", self.recover_checkbox)
         settings_form.addRow("First frame", self.turbo_handeye_btn)
 
         prompt_box = QGroupBox("Prompting")
@@ -407,6 +413,7 @@ class MainWindow(QMainWindow):
             use_lumped_error_init=self.lumped_checkbox.isChecked(),
             joint_angle_free_mode=self.joint_angle_free_checkbox.isChecked(),
             use_prev_joint_angles=self.joint_angle_free_checkbox.isChecked(),
+            recover_mode=self.recover_checkbox.isChecked(),
             use_turbo_handeye_init=self.turbo_handeye_btn.isChecked(),
         )
 
@@ -662,6 +669,7 @@ class MainWindow(QMainWindow):
         self.renderer_combo.setEnabled(False)
         self.input_mode_combo.setEnabled(False)
         self.turbo_handeye_btn.setEnabled(False)
+        self.recover_checkbox.setEnabled(False)
 
         self.worker_thread.start()
         self._paused = False
@@ -782,6 +790,7 @@ class MainWindow(QMainWindow):
         self.renderer_combo.setEnabled(True)
         self.input_mode_combo.setEnabled(True)
         self.turbo_handeye_btn.setEnabled(True)
+        self.recover_checkbox.setEnabled(True)
         self.joint_angle_free_checkbox.setEnabled(True)
         self._update_mode_controls()
         self._paused = False

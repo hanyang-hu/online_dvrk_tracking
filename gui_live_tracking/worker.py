@@ -273,6 +273,120 @@ class TrackingWorker(QObject):
     def _matrix_to_cTr(self, model: CtRNet, pose_matrix: torch.Tensor) -> torch.Tensor:
         return model.pose_matrix_to_cTr(pose_matrix.unsqueeze(0))[0]
 
+    def _loss_to_float(self, loss) -> Optional[float]:
+        if loss is None:
+            return None
+        try:
+            if torch.is_tensor(loss):
+                if loss.numel() == 0:
+                    return None
+                return float(loss.detach().reshape(-1)[0].cpu().item())
+            return float(loss)
+        except (TypeError, ValueError, RuntimeError):
+            return None
+
+    def _tensor_is_finite(self, value: Optional[torch.Tensor]) -> bool:
+        return torch.is_tensor(value) and value.numel() > 0 and bool(torch.all(torch.isfinite(value)).item())
+
+    def _tracking_invalid_reason(self, cTr: torch.Tensor, joint_angles: torch.Tensor, loss) -> Optional[str]:
+        loss_val = self._loss_to_float(loss)
+        if loss_val is None:
+            return "loss is None"
+        if not np.isfinite(loss_val):
+            return f"loss is {loss_val}"
+        if not self._tensor_is_finite(cTr):
+            return "pose output contains NaN or Inf"
+        if not self._tensor_is_finite(joint_angles):
+            return "joint-angle output contains NaN or Inf"
+        return None
+
+    def _debug_tensor(self, value: Optional[torch.Tensor]) -> object:
+        if value is None:
+            return None
+        if not torch.is_tensor(value):
+            return value
+        arr = value.detach().cpu().reshape(-1).numpy().astype(float)
+        return np.round(arr, 6).tolist()
+
+    def _restore_tracker_state(
+        self,
+        tracker: Tracker,
+        last_valid_tracker_cTr: torch.Tensor,
+        last_valid_joint_angles: torch.Tensor,
+    ) -> None:
+        tracker._prev_cTr = last_valid_tracker_cTr.detach().clone()
+        tracker._prev_joint_angles = last_valid_joint_angles.detach().clone()
+
+    def _recover_or_update_tracking_state(
+        self,
+        *,
+        tracker: Tracker,
+        frame_idx: int,
+        context: str,
+        input_cTr: Optional[torch.Tensor],
+        input_joint_angles: Optional[torch.Tensor],
+        cTr: torch.Tensor,
+        joint_angles: torch.Tensor,
+        loss,
+        last_valid_cTr: Optional[torch.Tensor],
+        last_valid_tracker_cTr: Optional[torch.Tensor],
+        last_valid_joint_angles: Optional[torch.Tensor],
+        last_valid_loss: Optional[float],
+        recover_enabled: bool,
+    ) -> Tuple[torch.Tensor, torch.Tensor, float, Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor], Optional[float], bool]:
+        invalid_reason = self._tracking_invalid_reason(cTr, joint_angles, loss)
+        loss_val = self._loss_to_float(loss)
+
+        if invalid_reason is not None:
+            self.status.emit(
+                "Recover mode invalid tracking result: "
+                f"frame={frame_idx}, context={context}, reason={invalid_reason}, "
+                f"input_pose={self._debug_tensor(input_cTr)}, "
+                f"input_joints={self._debug_tensor(input_joint_angles)}, "
+                f"output_pose={self._debug_tensor(cTr)}, "
+                f"output_joints={self._debug_tensor(joint_angles)}, "
+                f"output_loss={loss_val}"
+            )
+            if recover_enabled and last_valid_cTr is not None and last_valid_joint_angles is not None:
+                cTr = last_valid_cTr.detach().clone()
+                joint_angles = last_valid_joint_angles.detach().clone()
+                loss_val = float(last_valid_loss) if last_valid_loss is not None else float("inf")
+                if last_valid_tracker_cTr is not None:
+                    self._restore_tracker_state(tracker, last_valid_tracker_cTr, last_valid_joint_angles)
+                self.status.emit(
+                    f"Recovered frame {frame_idx} using last valid pose; reported loss={loss_val:.6g}."
+                )
+                return (
+                    cTr,
+                    joint_angles,
+                    loss_val,
+                    last_valid_cTr,
+                    last_valid_tracker_cTr,
+                    last_valid_joint_angles,
+                    last_valid_loss,
+                    True,
+                )
+            raise RuntimeError(
+                "Tracking result is invalid and recovery is disabled or no last valid pose is available: "
+                f"{invalid_reason}"
+            )
+
+        loss_val = float(loss_val)
+        last_valid_cTr = cTr.detach().clone()
+        last_valid_tracker_cTr = tracker._prev_cTr.detach().clone()
+        last_valid_joint_angles = joint_angles.detach().clone()
+        last_valid_loss = loss_val
+        return (
+            cTr,
+            joint_angles,
+            loss_val,
+            last_valid_cTr,
+            last_valid_tracker_cTr,
+            last_valid_joint_angles,
+            last_valid_loss,
+            False,
+        )
+
     def _run_turbo_pose_initializer(
         self,
         mask: torch.Tensor,
@@ -543,6 +657,10 @@ class TrackingWorker(QObject):
         source = create_frame_source(cfg)
         sink = create_result_sink(cfg)
         invalid_sample_count = 0
+        last_valid_cTr: Optional[torch.Tensor] = None
+        last_valid_tracker_cTr: Optional[torch.Tensor] = None
+        last_valid_joint_angles: Optional[torch.Tensor] = None
+        last_valid_loss: Optional[float] = None
 
         try:
             source.start()
@@ -667,14 +785,41 @@ class TrackingWorker(QObject):
                     )
                     self._apply_joint_mode_to_tracker(args, tracker, runtime_joint_angle_free)
 
+                    input_cTr = cTr.detach().clone()
+                    input_joint_angles = joint_angles.detach().clone()
                     cTr, joint_angles, loss = tracker.track_frame(
                         ref_mask=mask,
                         joint_angles=joint_angles,
                         is_init=True,
                         keypoints=None,
                     )
+                    (
+                        cTr,
+                        joint_angles,
+                        loss_val,
+                        last_valid_cTr,
+                        last_valid_tracker_cTr,
+                        last_valid_joint_angles,
+                        last_valid_loss,
+                        used_recovery,
+                    ) = self._recover_or_update_tracking_state(
+                        tracker=tracker,
+                        frame_idx=frame_idx,
+                        context="initialization",
+                        input_cTr=input_cTr,
+                        input_joint_angles=input_joint_angles,
+                        cTr=cTr,
+                        joint_angles=joint_angles,
+                        loss=loss,
+                        last_valid_cTr=last_valid_cTr,
+                        last_valid_tracker_cTr=last_valid_tracker_cTr,
+                        last_valid_joint_angles=last_valid_joint_angles,
+                        last_valid_loss=last_valid_loss,
+                        recover_enabled=cfg.recover_mode,
+                    )
+                    loss = loss_val
 
-                    if runtime_use_lumped:
+                    if runtime_use_lumped and not used_recovery:
                         cTr_A, _ = self._initialization(cam_T_b=cam_T_b, joint_angles=raw_joint_angles, psm_arm=psm_arm)
                         T_A = self._cTr_to_matrix(model, cTr_A)
                         T_B = self._cTr_to_matrix(model, cTr)
@@ -696,6 +841,9 @@ class TrackingWorker(QObject):
 
                     tracker.num_iters = runtime_iters
                     self._apply_joint_mode_to_tracker(args, tracker, runtime_joint_angle_free)
+                    input_cTr = cTr.detach().clone()
+                    input_joint_angles = joint_angles.detach().clone()
+                    T_A = None
                     if runtime_joint_angle_free:
                         cTr, joint_angles, loss = tracker.track_frame(
                             ref_mask=mask,
@@ -714,6 +862,8 @@ class TrackingWorker(QObject):
                         T_init = w_lumped @ T_A
                         cTr_init_axis = self._matrix_to_cTr(model, T_init)
                         cTr_init = self._axis_to_optimizer_rot(cTr_init_axis, args.use_mix_angle)
+                        input_cTr = cTr_init_axis.detach().clone()
+                        input_joint_angles = joint_angles_fk.detach().clone()
                         cTr, joint_angles, loss = tracker.track_frame(
                             ref_mask=mask,
                             joint_angles=joint_angles_fk,
@@ -721,10 +871,9 @@ class TrackingWorker(QObject):
                             keypoints=None,
                             cTr_init=cTr_init,
                         )
-                        T_B = self._cTr_to_matrix(model, cTr)
-                        w_lumped = T_B @ torch.linalg.inv(T_A)
                     else:
                         joint_angles_reading = self._visible_joint_angles_from_raw(raw_joint_angles)
+                        input_joint_angles = joint_angles_reading.detach().clone()
                         cTr, joint_angles, loss = tracker.track_frame(
                             ref_mask=mask,
                             joint_angles=joint_angles_reading,
@@ -732,6 +881,35 @@ class TrackingWorker(QObject):
                             keypoints=None,
                             cTr_init=None,
                         )
+                    (
+                        cTr,
+                        joint_angles,
+                        loss_val,
+                        last_valid_cTr,
+                        last_valid_tracker_cTr,
+                        last_valid_joint_angles,
+                        last_valid_loss,
+                        used_recovery,
+                    ) = self._recover_or_update_tracking_state(
+                        tracker=tracker,
+                        frame_idx=frame_idx,
+                        context="tracking",
+                        input_cTr=input_cTr,
+                        input_joint_angles=input_joint_angles,
+                        cTr=cTr,
+                        joint_angles=joint_angles,
+                        loss=loss,
+                        last_valid_cTr=last_valid_cTr,
+                        last_valid_tracker_cTr=last_valid_tracker_cTr,
+                        last_valid_joint_angles=last_valid_joint_angles,
+                        last_valid_loss=last_valid_loss,
+                        recover_enabled=cfg.recover_mode,
+                    )
+                    loss = loss_val
+
+                    if runtime_use_lumped and not runtime_joint_angle_free and not used_recovery and T_A is not None:
+                        T_B = self._cTr_to_matrix(model, cTr)
+                        w_lumped = T_B @ torch.linalg.inv(T_A)
 
                     torch.cuda.synchronize()
                     t3 = time.time()
@@ -748,7 +926,8 @@ class TrackingWorker(QObject):
                     avg_time = sum(seg_time_lst[-5:]) / len(seg_time_lst[-5:]) + sum(track_time_lst[-5:]) / len(track_time_lst[-5:])
                     fps = 1.0 / avg_time if avg_time > 0 else 0.0
 
-                loss_val = float(loss.item()) if isinstance(loss, torch.Tensor) else float(loss)
+                loss_val = self._loss_to_float(loss)
+                loss_val = float(loss_val) if loss_val is not None else float("inf")
                 cv2.putText(
                     blended,
                     f"Frame: {frame_idx} | Loss: {loss_val:.4f} | FPS: {fps:.2f}",
@@ -841,8 +1020,33 @@ class TrackingWorker(QObject):
                             keypoints=None,
                             cTr_init=cTr_reinit_input,
                         )
+                        (
+                            cTr,
+                            joint_angles,
+                            reinit_loss_val,
+                            last_valid_cTr,
+                            last_valid_tracker_cTr,
+                            last_valid_joint_angles,
+                            last_valid_loss,
+                            used_recovery,
+                        ) = self._recover_or_update_tracking_state(
+                            tracker=tracker,
+                            frame_idx=frame_idx,
+                            context="reinitialization",
+                            input_cTr=cTr_reinit,
+                            input_joint_angles=joint_reinit,
+                            cTr=cTr,
+                            joint_angles=joint_angles,
+                            loss=loss,
+                            last_valid_cTr=last_valid_cTr,
+                            last_valid_tracker_cTr=last_valid_tracker_cTr,
+                            last_valid_joint_angles=last_valid_joint_angles,
+                            last_valid_loss=last_valid_loss,
+                            recover_enabled=cfg.recover_mode,
+                        )
+                        loss = reinit_loss_val
 
-                        if runtime_use_lumped_after:
+                        if runtime_use_lumped_after and not used_recovery:
                             T_A = self._cTr_to_matrix(model, cTr_reinit)
                             T_B = self._cTr_to_matrix(model, cTr)
                             w_lumped = T_B @ torch.linalg.inv(T_A)
@@ -852,7 +1056,8 @@ class TrackingWorker(QObject):
                         reinit_blended = cv2.addWeighted(paused_frame, 0.7, color, 0.3, 0)
                         reinit_blended = skeleton_visualizer.plot_skeleton_overlay(reinit_blended, cTr, joint_angles)
                         reinit_blended = cv2.resize(reinit_blended, frame_shape_orig)
-                        reinit_loss_val = float(loss.item()) if isinstance(loss, torch.Tensor) else float(loss)
+                        reinit_loss_val = self._loss_to_float(loss)
+                        reinit_loss_val = float(reinit_loss_val) if reinit_loss_val is not None else float("inf")
                         reinit_pose_matrix = self._cTr_to_matrix(model, cTr).detach().cpu().numpy()
                         sink.send_result(
                             TrackingResult(
