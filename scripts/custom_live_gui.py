@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 import traceback
 from dataclasses import replace
 from pathlib import Path
@@ -49,6 +50,7 @@ if str(REPO_ROOT / "SurgicalSAM2") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "SurgicalSAM2"))
 
 from gui_live_tracking.config import LiveTrackingConfig
+from gui_live_tracking.frame_source import tracking_sample_invalid_reason
 from gui_live_tracking.path_utils import validate_config
 from gui_live_tracking.source_factory import create_frame_source
 from gui_live_tracking.worker import TrackingWorker
@@ -68,7 +70,18 @@ class PreviewLoader(QObject):
         try:
             source = create_frame_source(self.config)
             source.start()
-            sample = source.get_sample(timeout_sec=self.timeout_sec)
+            deadline = time.monotonic() + max(0.0, self.timeout_sec)
+            sample = None
+            while True:
+                remaining = max(0.0, deadline - time.monotonic())
+                if remaining <= 0:
+                    break
+                candidate = source.get_sample(timeout_sec=remaining)
+                if candidate is None:
+                    break
+                if tracking_sample_invalid_reason(candidate) is None:
+                    sample = candidate
+                    break
             if sample is None:
                 self.completed.emit(None, "")
             else:
@@ -452,7 +465,18 @@ class MainWindow(QMainWindow):
         source = create_frame_source(cfg)
         try:
             source.start()
-            sample = source.get_sample(timeout_sec=cfg.sample_timeout_sec)
+            sample = None
+            while True:
+                candidate = source.get_sample(timeout_sec=cfg.sample_timeout_sec)
+                if candidate is None:
+                    break
+                invalid_reason = tracking_sample_invalid_reason(candidate)
+                if invalid_reason is None:
+                    sample = candidate
+                    break
+                self._log(
+                    f"Skipping invalid initialization sample {candidate.source_index}: {invalid_reason}."
+                )
         except Exception as exc:
             QMessageBox.warning(self, "Source error", str(exc))
             return

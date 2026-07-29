@@ -35,6 +35,7 @@ from diffcali.utils.skeleton_visualizer import SkeletonVisualizer
 from sam2.build_sam import build_sam2_camera_predictor
 
 from gui_live_tracking.config import LiveTrackingConfig
+from gui_live_tracking.frame_source import tracking_sample_invalid_reason
 from gui_live_tracking.result_sink import TrackingResult
 from gui_live_tracking.source_factory import create_frame_source, create_result_sink
 
@@ -541,6 +542,7 @@ class TrackingWorker(QObject):
         track_time_lst: List[float] = []
         source = create_frame_source(cfg)
         sink = create_result_sink(cfg)
+        invalid_sample_count = 0
 
         try:
             source.start()
@@ -570,6 +572,20 @@ class TrackingWorker(QObject):
                             self._waiting_for_ros = True
                         continue
                     break
+
+                invalid_reason = tracking_sample_invalid_reason(sample)
+                if invalid_reason is not None:
+                    invalid_sample_count += 1
+                    if invalid_sample_count == 1 or invalid_sample_count % 30 == 0:
+                        self.status.emit(
+                            f"Skipping invalid input sample {sample.source_index}: {invalid_reason}. "
+                            "Waiting for the next valid input..."
+                        )
+                    continue
+
+                if invalid_sample_count:
+                    self.status.emit(f"Received valid input after skipping {invalid_sample_count} invalid sample(s).")
+                    invalid_sample_count = 0
 
                 if self._waiting_for_ros:
                     self.status.emit("ROS 2 sample received.")
