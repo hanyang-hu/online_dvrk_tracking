@@ -79,6 +79,16 @@ class SkeletonVisualizer:
 
         # One-Euro filters per keypoint
         self.filters = defaultdict(lambda: OneEuroFilter(min_cutoff=min_cutoff, beta=beta, alpha_d=alpha_d, dt=1/freq))
+        self._filters_to_reset = set()
+
+    def _reject_point(self, name):
+        if self.use_filter:
+            self._filters_to_reset.add(name)
+        return None
+
+    def _reset_all_filters_next_valid(self):
+        if self.use_filter:
+            self._filters_to_reset.update(["base", "p_neg", "tip_end", "tip_1", "tip_2"])
 
     def project_cam(self, p_cam):
         if p_cam is None:
@@ -92,16 +102,21 @@ class SkeletonVisualizer:
 
     def _filter_point(self, name, pt):
         if pt is None:
-            return None
+            return self._reject_point(name)
         pt_arr = np.asarray(pt, dtype=np.float64).reshape(-1)
         if pt_arr.size < 2 or not np.all(np.isfinite(pt_arr[:2])):
-            return None
+            return self._reject_point(name)
         if not self.use_filter:
+            return (int(round(float(pt_arr[0]))), int(round(float(pt_arr[1]))))
+
+        if name in self._filters_to_reset:
+            self.filters[name].reset(pt_arr[:2])
+            self._filters_to_reset.discard(name)
             return (int(round(float(pt_arr[0]))), int(round(float(pt_arr[1]))))
 
         filtered = np.asarray(self.filters[name].filter(pt_arr[:2]), dtype=np.float64).reshape(-1)
         if filtered.size < 2 or not np.all(np.isfinite(filtered[:2])):
-            return None
+            return self._reject_point(name)
         return (int(round(float(filtered[0]))), int(round(float(filtered[1]))))
 
     def _draw_line(self, image, pt1, pt2, color):
@@ -132,6 +147,7 @@ class SkeletonVisualizer:
         shaft_axis = pose_matrix[:3, :3][:, 2].cpu().numpy()
         shaft_axis_norm = np.linalg.norm(shaft_axis)
         if not np.isfinite(shaft_axis_norm) or shaft_axis_norm <= 1e-9:
+            self._reset_all_filters_next_valid()
             return blended
         shaft_axis = shaft_axis / shaft_axis_norm
         p_neg = base_cam - 0.03 * shaft_axis
