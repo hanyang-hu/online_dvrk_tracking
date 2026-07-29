@@ -81,14 +81,33 @@ class SkeletonVisualizer:
         self.filters = defaultdict(lambda: OneEuroFilter(min_cutoff=min_cutoff, beta=beta, alpha_d=alpha_d, dt=1/freq))
 
     def project_cam(self, p_cam):
+        if p_cam is None:
+            return None
+        p_cam = np.asarray(p_cam, dtype=np.float64).reshape(-1)
+        if p_cam.size < 3 or not np.all(np.isfinite(p_cam[:3])) or abs(float(p_cam[2])) < 1e-9:
+            return None
         x = self.ctrnet_args.fx * (p_cam[0] / p_cam[2]) + self.ctrnet_args.px
         y = self.ctrnet_args.fy * (p_cam[1] / p_cam[2]) + self.ctrnet_args.py
         return (x, y)
 
     def _filter_point(self, name, pt):
+        if pt is None:
+            return None
+        pt_arr = np.asarray(pt, dtype=np.float64).reshape(-1)
+        if pt_arr.size < 2 or not np.all(np.isfinite(pt_arr[:2])):
+            return None
         if not self.use_filter:
-            return tuple(map(int, pt))
-        return tuple(self.filters[name].filter(pt))
+            return (int(round(float(pt_arr[0]))), int(round(float(pt_arr[1]))))
+
+        filtered = np.asarray(self.filters[name].filter(pt_arr[:2]), dtype=np.float64).reshape(-1)
+        if filtered.size < 2 or not np.all(np.isfinite(filtered[:2])):
+            return None
+        return (int(round(float(filtered[0]))), int(round(float(filtered[1]))))
+
+    def _draw_line(self, image, pt1, pt2, color):
+        if pt1 is None or pt2 is None:
+            return
+        cv2.line(image, pt1, pt2, color, self.thickness)
 
     def plot_skeleton_overlay(
         self,
@@ -111,33 +130,37 @@ class SkeletonVisualizer:
         # -----------------------------
         base_cam = pose_matrix[:3, 3].cpu().numpy()
         shaft_axis = pose_matrix[:3, :3][:, 2].cpu().numpy()
-        shaft_axis = shaft_axis / np.linalg.norm(shaft_axis)
+        shaft_axis_norm = np.linalg.norm(shaft_axis)
+        if not np.isfinite(shaft_axis_norm) or shaft_axis_norm <= 1e-9:
+            return blended
+        shaft_axis = shaft_axis / shaft_axis_norm
         p_neg = base_cam - 0.03 * shaft_axis
 
         pt_base = self._filter_point("base", self.project_cam(base_cam))
         pt_neg  = self._filter_point("p_neg", self.project_cam(p_neg))
 
         h, w, _ = blended.shape
-        
-        p0 = np.array(pt_base, dtype=np.float32)
-        p1 = np.array(pt_neg, dtype=np.float32)
 
-        d = p1 - p0
-        norm = np.linalg.norm(d)
-        if norm > 1e-6:
-            d /= norm
+        if pt_base is not None and pt_neg is not None:
+            p0 = np.array(pt_base, dtype=np.float32)
+            p1 = np.array(pt_neg, dtype=np.float32)
 
-            far_pt = p0 + d * max(w, h) * 2
+            d = p1 - p0
+            norm = np.linalg.norm(d)
+            if np.isfinite(norm) and norm > 1e-6:
+                d /= norm
 
-            ok, _, border_pt = cv2.clipLine(
-                (0, 0, w, h),
-                tuple(p0.astype(int)),
-                tuple(far_pt.astype(int))
-            )
+                far_pt = p0 + d * max(w, h) * 2
 
-            if ok:
-                pt_neg_far = border_pt
-                cv2.line(blended, pt_base, pt_neg_far, (255, 255, 0), self.thickness)
+                ok, _, border_pt = cv2.clipLine(
+                    (0, 0, w, h),
+                    (int(p0[0]), int(p0[1])),
+                    (int(far_pt[0]), int(far_pt[1]))
+                )
+
+                if ok:
+                    pt_neg_far = (int(border_pt[0]), int(border_pt[1]))
+                    self._draw_line(blended, pt_base, pt_neg_far, (255, 255, 0))
 
         # cv2.line(blended, pt_neg, pt_base, (255, 255, 0), self.thickness)
 
@@ -146,7 +169,7 @@ class SkeletonVisualizer:
         # -----------------------------
         tip_end_cam = (pose_matrix @ torch.cat([t_list[2], t_list[2].new_ones(1)]))[:3].cpu().numpy()
         pt_tip_end = self._filter_point("tip_end", self.project_cam(tip_end_cam))
-        cv2.line(blended, pt_base, pt_tip_end, (0, 255, 0), self.thickness)
+        self._draw_line(blended, pt_base, pt_tip_end, (0, 255, 0))
 
         # -----------------------------
         # TIP END → TIP 1 / TIP 2
@@ -157,8 +180,8 @@ class SkeletonVisualizer:
         pt_tip_1 = self._filter_point("tip_1", tip_1)
         pt_tip_2 = self._filter_point("tip_2", tip_2)
 
-        cv2.line(blended, pt_tip_end, pt_tip_1, (0, 0, 255), self.thickness)
-        cv2.line(blended, pt_tip_end, pt_tip_2, (255, 0, 0), self.thickness)
+        self._draw_line(blended, pt_tip_end, pt_tip_1, (0, 0, 255))
+        self._draw_line(blended, pt_tip_end, pt_tip_2, (255, 0, 0))
 
         return blended
 
