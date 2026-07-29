@@ -166,9 +166,17 @@ class DummyLogger(Logger):
     def __call__(self, status: dict):
         # Update best value and evaluation
         try:
-            if self.best_solution is None or status["pop_best_eval"] < self.best_eval:
-                self.best_solution = status["pop_best"].values.clone()
-                self.best_eval = status["pop_best_eval"]
+            pop_best_eval = status["pop_best_eval"]
+            pop_best_values = status["pop_best"].values.clone()
+            if torch.is_tensor(pop_best_eval):
+                pop_best_eval_finite = bool(torch.isfinite(pop_best_eval).all().item())
+            else:
+                pop_best_eval_finite = np.isfinite(float(pop_best_eval))
+            if not pop_best_eval_finite or not torch.all(torch.isfinite(pop_best_values)):
+                return
+            if self.best_solution is None or pop_best_eval < self.best_eval:
+                self.best_solution = pop_best_values
+                self.best_eval = pop_best_eval
                 # print(f"New best solution found: {self.best_solution}, evaluation: {self.best_eval}")
         except:
             if self.has_warned_about_pop_best_eval:
@@ -366,6 +374,23 @@ class PoseEstimationProblem(Problem):
         joint_angles = values[:, self.pose_dim:]  # shape (B, 3) or (B, 4)
         B = cTr_batch.shape[0]
 
+        invalid_solution_mask = (
+            ~torch.isfinite(cTr_batch).all(dim=1)
+            | ~torch.isfinite(joint_angles).all(dim=1)
+        )
+        if torch.any(invalid_solution_mask):
+            cTr_batch = cTr_batch.clone()
+            joint_angles = joint_angles.clone()
+            cTr_batch[invalid_solution_mask] = self.cTr_init.to(
+                device=cTr_batch.device,
+                dtype=cTr_batch.dtype,
+            )
+            joint_mid = 0.5 * (self.joint_angles_lb + self.joint_angles_ub)
+            joint_angles[invalid_solution_mask] = joint_mid[: joint_angles.shape[1]].to(
+                device=joint_angles.device,
+                dtype=joint_angles.dtype,
+            )
+
         if self.args.symmetric_jaw:
             joint_angles = torch.cat([joint_angles[:, :3], joint_angles[:, -1:]], dim=1)  # make jaws symmetric
 
@@ -424,6 +449,7 @@ class PoseEstimationProblem(Problem):
             self.ref_mask_b,
             reduction="none",
         ).mean(dim=(1, 2))
+        invalid_render_mask = ~torch.isfinite(pred_masks_b).flatten(1).all(dim=1)
 
         # Compute distance loss
         if self.dist_weight > 0.:
@@ -487,23 +513,22 @@ class PoseEstimationProblem(Problem):
             + self.pts_weight * pts_val 
         )
 
-        if torch.any(torch.isnan(loss)):
-            loss[torch.isnan(loss)] = float('inf')
+        invalid_loss_mask = ~torch.isfinite(loss)
+        invalid_state_mask = (
+            invalid_solution_mask
+            | invalid_render_mask
+            | ~torch.isfinite(cTr_batch).all(dim=1)
+            | ~torch.isfinite(joint_angles).all(dim=1)
+        )
+        invalid_mask = invalid_loss_mask | invalid_state_mask
+        if torch.any(invalid_mask):
+            loss = loss.clone()
+            loss[invalid_mask] = float('inf')
             # print("[Warning] NaN loss encountered, setting to inf.")
             # # Print the inputs that caused NaN
             # nan_indices = torch.isnan(loss).nonzero(as_tuple=True)[0]
             # for idx in nan_indices:
             #     print(f"NaN loss for input: cTr = {cTr_batch[idx]}, joint_angles = {joint_angles[idx]}")
-
-        if torch.any(torch.isnan(cTr_batch)) or torch.any(torch.isnan(joint_angles)):
-            loss[torch.isnan(cTr_batch).any(dim=1) | torch.isnan(joint_angles).any(dim=1)] = float('inf') # set loss to inf if inputs are NaN
-            # print("[Warning] NaN in cTr or joint angles.")
-            # nan_indices = torch.unique(torch.cat((
-            #     torch.isnan(cTr_batch).any(dim=1).nonzero(as_tuple=True)[0],
-            #     torch.isnan(joint_angles).any(dim=1).nonzero(as_tuple=True)[0]
-            # )))
-            # for idx in nan_indices:
-            #     print(f"NaN input: cTr = {cTr_batch[idx]}, joint_angles = {joint_angles[idx]}") 
 
         # print(loss)
 
@@ -1185,6 +1210,14 @@ class Tracker:
                 )
         else:
             ref_keypoints = None
+
+        if ref_keypoints is not None:
+            if (
+                not torch.is_tensor(ref_keypoints)
+                or tuple(ref_keypoints.shape) != (2, 2)
+                or not torch.all(torch.isfinite(ref_keypoints))
+            ):
+                ref_keypoints = None
         
         self.problem.update_problem(
             ref_mask, ref_keypoints, self._prev_cTr.clone(), self.stdev_init.clone()
@@ -1211,10 +1244,17 @@ class Tracker:
         debug_input_joint_angles = joint_angles.detach().clone()
         
         if self.args.cos_reparams:
+            joint_angles = torch.clamp(
+                joint_angles,
+                self.problem.joint_angles_lb,
+                self.problem.joint_angles_ub,
+            )
             joint_angles_R = self.problem.joint_angles_ub - self.problem.joint_angles_lb
+            acos_arg = 1 - 2 * (joint_angles - self.problem.joint_angles_lb) / joint_angles_R
+            acos_arg = torch.clamp(acos_arg, -1.0, 1.0)
             joint_angles = self.problem.joint_angles_lb + \
                         joint_angles_R / math.pi * \
-                        torch.acos(1 - 2 * (joint_angles - self.problem.joint_angles_lb) / joint_angles_R)
+                        torch.acos(acos_arg)
             
         if self.args.symmetric_jaw:
             center_init = torch.cat([cTr, joint_angles[:3]], dim=0)
