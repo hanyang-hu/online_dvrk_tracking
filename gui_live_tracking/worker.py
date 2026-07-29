@@ -213,6 +213,11 @@ class TrackingWorker(QObject):
         # Fallback to existing custom defaults.
         return 1025.88223, 1025.88223, 167.919017, 234.152707
 
+    def _clamp_visible_joint_angles(self, visible_joint_angles: torch.Tensor) -> torch.Tensor:
+        lower = torch.tensor([-1.5707, -1.3963, 0.0, 0.0], dtype=visible_joint_angles.dtype, device=visible_joint_angles.device)
+        upper = torch.tensor([1.5707, 1.3963, 1.5707, 1.5707], dtype=visible_joint_angles.dtype, device=visible_joint_angles.device)
+        return torch.clamp(visible_joint_angles, lower, upper)
+
     def _initialization(self, cam_T_b: np.ndarray, joint_angles: np.ndarray, psm_arm: RobotLink) -> Tuple[torch.Tensor, torch.Tensor]:
         psm_arm.updateJointAngles(joint_angles)
 
@@ -226,12 +231,13 @@ class TrackingWorker(QObject):
         visible_joint_angles = torch.from_numpy(joint_angles).float().cuda()[-3:]
         visible_joint_angles[-1] /= 2.0
         visible_joint_angles = torch.cat([visible_joint_angles, visible_joint_angles[-1].unsqueeze(0)], dim=0)
-        return pose_vec, visible_joint_angles
+        return pose_vec, self._clamp_visible_joint_angles(visible_joint_angles)
 
     def _visible_joint_angles_from_raw(self, raw_joint_angles: np.ndarray) -> torch.Tensor:
         visible_joint_angles = torch.from_numpy(np.asarray(raw_joint_angles)).float().cuda()[-3:]
         visible_joint_angles[-1] /= 2.0
-        return torch.cat([visible_joint_angles, visible_joint_angles[-1].unsqueeze(0)], dim=0)
+        visible_joint_angles = torch.cat([visible_joint_angles, visible_joint_angles[-1].unsqueeze(0)], dim=0)
+        return self._clamp_visible_joint_angles(visible_joint_angles)
 
     def _rotation_matrix_to_quaternion_xyzw(self, rot: np.ndarray) -> List[float]:
         trace = float(np.trace(rot))
