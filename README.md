@@ -139,11 +139,7 @@ After the Conda environment and ROS Humble packages are installed, launch the di
 ./ros2_live_gui.sh
 ```
 
-The script activates `online_dvrk`, sources `/opt/ros/humble/setup.bash`, changes to the repository root, and runs `scripts/custom_live_gui.py`. If needed, override the defaults:
-
-```bash
-DVRK_CONDA_ENV=online_dvrk ROS_HUMBLE_SETUP=/opt/ros/humble/setup.bash ./ros2_live_gui.sh
-```
+The script activates `online_dvrk`, sources `/opt/ros/humble/setup.bash`, changes to the repository root, and runs `scripts/custom_live_gui.py`.
 
 ## rclpy and rosdep
 
