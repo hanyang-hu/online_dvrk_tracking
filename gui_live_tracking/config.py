@@ -45,6 +45,7 @@ class LiveTrackingConfig:
     cos_reparams: bool = True
     joint_angle_free_mode: bool = False
     recover_mode: bool = True
+    verbose_timing: bool = False
     use_turbo_handeye_init: bool = False
     virtual_handeye_save_path: Optional[Path] = None
     use_bo_initializer: bool = True

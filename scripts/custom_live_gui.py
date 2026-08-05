@@ -208,8 +208,6 @@ class MainWindow(QMainWindow):
         self.sample_timeout_spin.setRange(0.05, 10.0)
         self.sample_timeout_spin.setDecimals(2)
         self.sample_timeout_spin.setValue(0.5)
-        self.ros_frame_id = QLineEdit("camera_left_optical_frame")
-        self.ros_child_frame_id = QLineEdit("PSM1_joint4_tracked")
 
         self._input_mode_rows = []
         input_form.addRow("Mode", self.input_mode_combo)
@@ -221,8 +219,6 @@ class MainWindow(QMainWindow):
         self._add_mode_row(input_form, "Sync queue size", self.ros_sync_queue_size, {"ros2"})
         self._add_mode_row(input_form, "Sync slop", self.ros_sync_slop, {"ros2"})
         self._add_mode_row(input_form, "Sample timeout", self.sample_timeout_spin, {"ros2"})
-        self._add_mode_row(input_form, "ROS frame ID", self.ros_frame_id, {"ros2"})
-        self._add_mode_row(input_form, "ROS child frame ID", self.ros_child_frame_id, {"ros2"})
 
         self.renderer_combo = QComboBox()
         self.renderer_combo.addItems(["nvdiffrast", "pytorch3d"])
@@ -255,6 +251,10 @@ class MainWindow(QMainWindow):
         self.recover_checkbox.setToolTip(
             "When tracking returns an invalid loss or state, reuse the last valid pose and re-seed the next frame from it."
         )
+        self.verbose_checkbox = QCheckBox("Verbose timing")
+        self.verbose_checkbox.setToolTip(
+            "Print per-frame timing breakdowns to the progress log while tracking runs."
+        )
         self.turbo_handeye_btn = QPushButton("TuRBO Hand-Eye Init")
         self.turbo_handeye_btn.setCheckable(True)
         self.turbo_handeye_btn.setToolTip(
@@ -270,6 +270,7 @@ class MainWindow(QMainWindow):
         settings_form.addRow("Lumped error", self.lumped_checkbox)
         settings_form.addRow("Joint angles", self.joint_angle_free_checkbox)
         settings_form.addRow("Recover", self.recover_checkbox)
+        settings_form.addRow("Verbose", self.verbose_checkbox)
         settings_form.addRow("First frame", self.turbo_handeye_btn)
 
         prompt_box = QGroupBox("Prompting")
@@ -333,6 +334,7 @@ class MainWindow(QMainWindow):
         self.iters_spin.valueChanged.connect(self._runtime_update)
         self.lumped_checkbox.stateChanged.connect(self._runtime_update)
         self.joint_angle_free_checkbox.stateChanged.connect(self._runtime_update)
+        self.verbose_checkbox.stateChanged.connect(self._runtime_update)
         self.input_mode_combo.currentIndexChanged.connect(self._update_mode_controls)
         self._update_mode_controls()
 
@@ -402,8 +404,6 @@ class MainWindow(QMainWindow):
             ros_jaw_topic=self.ros_jaw_topic.text().strip(),
             ros_sync_queue_size=self.ros_sync_queue_size.value(),
             ros_sync_slop_sec=self.ros_sync_slop.value(),
-            ros_frame_id=self.ros_frame_id.text().strip(),
-            ros_child_frame_id=self.ros_child_frame_id.text().strip(),
             renderer=self.renderer_combo.currentText(),
             searcher=self.optimizer_combo.currentText(),
             downscale_factor=int(self.downscale_combo.currentText()),
@@ -414,6 +414,7 @@ class MainWindow(QMainWindow):
             joint_angle_free_mode=self.joint_angle_free_checkbox.isChecked(),
             use_prev_joint_angles=self.joint_angle_free_checkbox.isChecked(),
             recover_mode=self.recover_checkbox.isChecked(),
+            verbose_timing=self.verbose_checkbox.isChecked(),
             use_turbo_handeye_init=self.turbo_handeye_btn.isChecked(),
         )
 
@@ -675,6 +676,10 @@ class MainWindow(QMainWindow):
         self._paused = False
         self._relabel_mode_active = False
         self._log("Tracking started.")
+        self._log(
+            "ROS output frame IDs: "
+            f"frame_id={cfg.ros_frame_id}, child_frame_id={cfg.ros_child_frame_id}"
+        )
 
     def _stop_tracking(self) -> None:
         if self.worker is not None:
@@ -732,6 +737,7 @@ class MainWindow(QMainWindow):
                 online_iters=self.iters_spin.value(),
                 use_lumped_error=self.lumped_checkbox.isChecked(),
                 joint_angle_free=self.joint_angle_free_checkbox.isChecked(),
+                verbose_timing=self.verbose_checkbox.isChecked(),
             )
 
     def _on_frame_ready(self, frame_rgb) -> None:

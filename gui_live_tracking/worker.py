@@ -64,6 +64,7 @@ class TrackingWorker(QObject):
         self._runtime_online_iters = config.online_iters
         self._runtime_use_lumped = config.use_lumped_error_init
         self._runtime_joint_angle_free = config.joint_angle_free_mode
+        self._runtime_verbose = config.verbose_timing
         self._turbo_handeye_applied = False
         self._joint_free_lumped_warned = False
 
@@ -84,11 +85,19 @@ class TrackingWorker(QObject):
             self._pending_reinit_prompts = (prompt_points, prompt_labels)
             self._pause_requested = False
 
-    def update_runtime(self, online_iters: int, use_lumped_error: bool, joint_angle_free: bool) -> None:
+    def update_runtime(
+        self,
+        online_iters: int,
+        use_lumped_error: bool,
+        joint_angle_free: bool,
+        verbose_timing: Optional[bool] = None,
+    ) -> None:
         with QMutexLocker(self._mutex):
             self._runtime_online_iters = max(1, int(online_iters))
             self._runtime_use_lumped = bool(use_lumped_error)
             self._runtime_joint_angle_free = bool(joint_angle_free)
+            if verbose_timing is not None:
+                self._runtime_verbose = bool(verbose_timing)
 
     def _snapshot_runtime(self) -> Tuple[bool, bool, int, bool, bool]:
         with QMutexLocker(self._mutex):
@@ -105,6 +114,10 @@ class TrackingWorker(QObject):
             prompts = self._pending_reinit_prompts
             self._pending_reinit_prompts = None
             return prompts
+
+    def _snapshot_verbose(self) -> bool:
+        with QMutexLocker(self._mutex):
+            return self._runtime_verbose
 
     def _wait_while_paused(self, frame_rgb: np.ndarray, frame_idx: int) -> Optional[Tuple[List[Tuple[int, int]], List[int]]]:
         self.status.emit(f"Paused at frame {frame_idx}. You can continue or re-initialize from this frame.")
@@ -688,7 +701,10 @@ class TrackingWorker(QObject):
                         self.status.emit("Ignoring lumped-error init while joint-angle free mode is enabled.")
                         self._joint_free_lumped_warned = True
 
+                frame_total_start = time.perf_counter()
+                sample_wait_start = frame_total_start
                 sample = source.get_sample(timeout_sec=cfg.sample_timeout_sec)
+                sample_wait_ms = (time.perf_counter() - sample_wait_start) * 1000.0
                 if sample is None:
                     if cfg.input_mode == "ros2":
                         if not self._waiting_for_ros:
@@ -715,6 +731,7 @@ class TrackingWorker(QObject):
                     self.status.emit("ROS 2 sample received.")
                     self._waiting_for_ros = False
 
+                preprocess_start = time.perf_counter()
                 frame_idx = sample.source_index
                 frame = sample.frame_bgr.copy()
                 raw_joint_angles = sample.raw_joint_angles.copy()
@@ -730,17 +747,25 @@ class TrackingWorker(QObject):
                 frame_shape_orig = (frame.shape[1], frame.shape[0])
                 frame = cv2.resize(frame, (ctrnet_args.width, ctrnet_args.height))
                 frame = (frame * args.dark_factor).astype(np.uint8)
+                preprocess_ms = (time.perf_counter() - preprocess_start) * 1000.0
+                sam_ms = 0.0
+                track_ms = 0.0
+                turbo_ms = 0.0
 
                 if not init_done:
                     if len(self.prompt_points) == 0:
                         raise RuntimeError("No prompt points provided. Add at least one FG prompt before starting.")
 
+                    sam_start = time.perf_counter()
                     predictor.load_first_frame(frame)
                     pts_np = np.array(self.prompt_points, dtype=np.float32)
                     lbs_np = np.array(self.prompt_labels, dtype=np.int64)
                     out_mask_logits = self._extract_mask_logits(
                         get_init_mask(frame_idx=0, obj_id=0, points=pts_np, labels=lbs_np)
                     )
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                    sam_ms = (time.perf_counter() - sam_start) * 1000.0
                     mask = (out_mask_logits.squeeze() > 0).float()
                     if cfg.input_mode == "ros2":
                         self.status.emit(
@@ -753,6 +778,7 @@ class TrackingWorker(QObject):
                             "Running TuRBO first-frame pose initialization for virtual hand-eye correction..."
                         )
                         turbo_start = time.time()
+                        turbo_timing_start = time.perf_counter()
                         turbo_cTr, turbo_joint_angles, turbo_loss = self._run_turbo_pose_initializer(
                             mask=mask,
                             model=model,
@@ -774,6 +800,7 @@ class TrackingWorker(QObject):
                             estimated_visible_joints=turbo_joint_angles,
                         )
                         elapsed = time.time() - turbo_start
+                        turbo_ms = (time.perf_counter() - turbo_timing_start) * 1000.0
                         self.status.emit(
                             "TuRBO virtual hand-eye correction applied "
                             f"in {elapsed:.1f}s. Best loss: {float(turbo_loss.item()):.6g}. "
@@ -781,6 +808,7 @@ class TrackingWorker(QObject):
                             f"Estimated visible joints: {turbo_joint_angles.detach().cpu().numpy().round(4).tolist()}"
                         )
 
+                    track_start = time.perf_counter()
                     cTr, joint_angles = self._initialization(cam_T_b=cam_T_b, joint_angles=raw_joint_angles, psm_arm=psm_arm)
                     joint_angles = self._visible_joint_angles_from_raw(raw_joint_angles)
 
@@ -832,18 +860,21 @@ class TrackingWorker(QObject):
                         w_lumped = T_B @ torch.linalg.inv(T_A)
 
                     init_done = True
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                    track_ms = (time.perf_counter() - track_start) * 1000.0
                 else:
                     torch.cuda.synchronize()
-                    t0 = time.time()
+                    t0 = time.perf_counter()
                     out_mask_logits = self._extract_mask_logits(get_next_mask(frame))
                     torch.cuda.synchronize()
-                    t1 = time.time()
-                    seg_time_lst.append(t1 - t0)
+                    sam_ms = (time.perf_counter() - t0) * 1000.0
+                    seg_time_lst.append(sam_ms / 1000.0)
 
                     mask = (out_mask_logits.squeeze() > 0).float()
 
                     torch.cuda.synchronize()
-                    t2 = time.time()
+                    t2 = time.perf_counter()
 
                     tracker.num_iters = runtime_iters
                     self._apply_joint_mode_to_tracker(args, tracker, runtime_joint_angle_free)
@@ -918,9 +949,10 @@ class TrackingWorker(QObject):
                         w_lumped = T_B @ torch.linalg.inv(T_A)
 
                     torch.cuda.synchronize()
-                    t3 = time.time()
-                    track_time_lst.append(t3 - t2)
+                    track_ms = (time.perf_counter() - t2) * 1000.0
+                    track_time_lst.append(track_ms / 1000.0)
 
+                overlay_start = time.perf_counter()
                 mask_np = (out_mask_logits.squeeze() > 0).cpu().numpy().astype(np.uint8) * 255
                 color = cv2.applyColorMap(mask_np, cv2.COLORMAP_JET)
                 blended = cv2.addWeighted(frame, 0.7, color, 0.3, 0)
@@ -943,7 +975,9 @@ class TrackingWorker(QObject):
                     (255, 255, 255),
                     2,
                 )
+                overlay_ms = (time.perf_counter() - overlay_start) * 1000.0
 
+                result_start = time.perf_counter()
                 pose_matrix = self._cTr_to_matrix(model, cTr).detach().cpu().numpy()
                 result = TrackingResult(
                     timestamp_ns=sample.timestamp_ns,
@@ -957,11 +991,34 @@ class TrackingWorker(QObject):
                     fps=fps,
                     overlay_bgr=blended.copy(),
                 )
-                sink.send_result(result)
+                result_ms = (time.perf_counter() - result_start) * 1000.0
 
+                publish_start = time.perf_counter()
+                sink.send_result(result)
+                publish_ms = (time.perf_counter() - publish_start) * 1000.0
+
+                ui_start = time.perf_counter()
                 rgb = cv2.cvtColor(blended, cv2.COLOR_BGR2RGB)
                 self.frame_ready.emit(rgb)
                 self.metrics.emit(fps, loss_val, frame_idx)
+                ui_ms = (time.perf_counter() - ui_start) * 1000.0
+                total_ms = (time.perf_counter() - frame_total_start) * 1000.0
+
+                if self._snapshot_verbose():
+                    self.status.emit(
+                        "Timing "
+                        f"frame={frame_idx}: "
+                        f"wait={sample_wait_ms:.1f}ms, "
+                        f"pre={preprocess_ms:.1f}ms, "
+                        f"sam={sam_ms:.1f}ms, "
+                        f"track={track_ms:.1f}ms, "
+                        f"turbo={turbo_ms:.1f}ms, "
+                        f"overlay={overlay_ms:.1f}ms, "
+                        f"result={result_ms:.1f}ms, "
+                        f"publish={publish_ms:.1f}ms, "
+                        f"ui={ui_ms:.1f}ms, "
+                        f"total={total_ms:.1f}ms"
+                    )
 
                 # Pause support: allow user to continue directly or re-initialize from the current sample.
                 (
