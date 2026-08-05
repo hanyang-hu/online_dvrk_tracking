@@ -119,6 +119,31 @@ class TrackingWorker(QObject):
         with QMutexLocker(self._mutex):
             return self._runtime_verbose
 
+    def _sam_state_summary(self, predictor) -> str:
+        state = getattr(predictor, "condition_state", None)
+        if not isinstance(state, dict):
+            return "sam_state=uninitialized"
+
+        output_dict = state.get("output_dict", {})
+        cond_count = len(output_dict.get("cond_frame_outputs", {}))
+        non_cond_count = len(output_dict.get("non_cond_frame_outputs", {}))
+        cached_count = len(state.get("cached_features", {}))
+        num_frames = state.get("num_frames", "?")
+
+        memory = ""
+        if torch.cuda.is_available():
+            allocated_mb = torch.cuda.memory_allocated() / (1024.0 * 1024.0)
+            reserved_mb = torch.cuda.memory_reserved() / (1024.0 * 1024.0)
+            memory = f", cuda_alloc={allocated_mb:.0f}MB, cuda_reserved={reserved_mb:.0f}MB"
+
+        return (
+            f"sam_frames={num_frames}, "
+            f"sam_cond={cond_count}, "
+            f"sam_noncond={non_cond_count}, "
+            f"sam_cache={cached_count}"
+            f"{memory}"
+        )
+
     def _wait_while_paused(self, frame_rgb: np.ndarray, frame_idx: int) -> Optional[Tuple[List[Tuple[int, int]], List[int]]]:
         self.status.emit(f"Paused at frame {frame_idx}. You can continue or re-initialize from this frame.")
         self.paused.emit(frame_rgb.copy(), frame_idx)
@@ -1017,7 +1042,8 @@ class TrackingWorker(QObject):
                         f"result={result_ms:.1f}ms, "
                         f"publish={publish_ms:.1f}ms, "
                         f"ui={ui_ms:.1f}ms, "
-                        f"total={total_ms:.1f}ms"
+                        f"total={total_ms:.1f}ms, "
+                        f"{self._sam_state_summary(predictor)}"
                     )
 
                 # Pause support: allow user to continue directly or re-initialize from the current sample.
