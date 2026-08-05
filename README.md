@@ -131,6 +131,20 @@ rosdep update
 
 This repository is launched as a normal Python application, so the explicit apt package list above is the primary installation path.
 
+## One-line ROS GUI launch
+
+After the Conda environment and ROS Humble packages are installed, launch the direct ROS 2 GUI with:
+
+```bash
+./ros2_live_gui.sh
+```
+
+The script activates `online_dvrk`, sources `/opt/ros/humble/setup.bash`, changes to the repository root, and runs `scripts/custom_live_gui.py`. If needed, override the defaults:
+
+```bash
+DVRK_CONDA_ENV=online_dvrk ROS_HUMBLE_SETUP=/opt/ros/humble/setup.bash ./ros2_live_gui.sh
+```
+
 ## rclpy and rosdep
 
 Use `rclpy` at runtime. It is the ROS 2 Python client library that creates nodes, subscriptions, publishers, executors, QoS profiles, and timers.
@@ -214,9 +228,7 @@ python scripts/custom_live_gui.py
 Perception PC direct ROS mode:
 
 ```bash
-conda activate online_dvrk
-source /opt/ros/humble/setup.bash
-python scripts/custom_live_gui.py
+./ros2_live_gui.sh
 ```
 
 The laptop command must work without sourcing ROS.
@@ -255,9 +267,15 @@ Verify topics with:
 
 ```bash
 ros2 topic list
-ros2 topic hz --qos-profile sensor_data /stereo/left/rectified_downscaled_image
+ros2 topic hz /stereo/left/rectified_downscaled_image
 ros2 topic echo --once --qos-profile sensor_data /PSM1/measured_js
 ros2 topic echo --once --qos-profile sensor_data /PSM1/jaw/measured_js
+```
+
+Some ROS 2 CLI versions do not support QoS overrides for `ros2 topic hz`. To measure the image topic with sensor-data QoS explicitly:
+
+```bash
+python scripts/measure_ros2_topic_hz.py /stereo/left/rectified_downscaled_image
 ```
 
 To receive one synchronized sample without starting the GUI:
